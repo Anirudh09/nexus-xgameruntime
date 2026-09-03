@@ -54,7 +54,7 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, void *reserved )
     return TRUE;
 }
 
-HRESULT WINAPI InitializeApiImplEx2( ULONG gdkVer, ULONG gsVer, char mode, const struct initialize_options *options )
+HRESULT WINAPI InitializeApiImplEx2( ULONG gdkVer, ULONG gsVer, char mode, const INITIALIZE_OPTIONS *options )
 {
     TRACE( "gdkVer %ld, gsVer %ld, mode %d, options %p.\n", gdkVer, gsVer, mode, options );
     return S_OK;
