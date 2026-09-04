@@ -21,27 +21,7 @@
 
 #include <gtest/gtest.h>
 
-int add(int a, int b)
-{
-    return a + b;
-}
+#include "test_fixtures.h"
 
-TEST(AddTest, AddsPositiveNumbers)
-{
-    EXPECT_EQ(add(2, 3), 5);
-}
-
-TEST(AddTest, AddsNegativeNumbers)
-{
-    EXPECT_EQ(add(-2, -3), -5);
-}
-
-TEST(AddTest, AddsZero)
-{
-    EXPECT_EQ(add(42, 0), 44); // Intentional failure
-}
-
-TEST(AddTest, IntentionalFailure)
-{
-    FAIL() << "This test is supposed to fail";
-}
+#include <windows.h>
+#include <xgameruntimeinit.h>
