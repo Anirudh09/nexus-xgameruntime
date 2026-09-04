@@ -1,6 +1,11 @@
 cmake_minimum_required( VERSION 3.20 )
 
-project( xgameruntime LANGUAGES C CXX )
+set( GDKC_VERSION 10002 )
+set( GAMING_SERVICES_VERSION 7874 )
+
+project(xgameruntime
+        LANGUAGES C CXX
+        VERSION ${GDKC_VERSION}.${GAMING_SERVICES_VERSION} )
 
 include( ExternalProject )
 

@@ -60,11 +60,11 @@ add_library(xgameruntime SHARED
         ${IDL_GENERATED_FILES} )
 
 # System
-target_sources( xgameruntime PRIVATE
+target_sources(xgameruntime PRIVATE
         System/XThreading.cpp )
 
 # System/Threading (based on libHttpClient)
-target_sources( xgameruntime PRIVATE
+target_sources(xgameruntime PRIVATE
         System/Threading/ThreadPool.cpp
         System/Threading/WaitTimer.cpp
         System/Threading/XAsync.cpp
