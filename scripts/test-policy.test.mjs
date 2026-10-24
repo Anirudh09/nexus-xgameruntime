@@ -178,3 +178,11 @@ test('current game licenses require proof-bound genuine SKU and support safe can
     assert.match(read('scripts/test-store.mjs'),/\['store-entitlements',971\]/);
     assert.match(read('scripts/test-store.mjs'),/realAccounts:false,realCloud:false,fullRuntime:false/);
 });
+
+test('relaunch and async-provider contracts remain byte-identical and account-free',()=>{
+    const lock=JSON.parse(read('tests/Nexus/provider-contracts.lock.json'));
+    assert.equal(Object.keys(lock.originalProbes).length,2);
+    for(const [name,expected]of Object.entries(lock.originalProbes))
+        assert.equal(crypto.createHash('sha256').update(read('tests/Nexus/'+name)).digest('hex'),expected,name);
+    assert.match(read('tests/Nexus/game-relaunch-probe.c'),/Never calls XUserAdd/);
+});

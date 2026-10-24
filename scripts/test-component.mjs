@@ -8,7 +8,7 @@ const buildArg = process.argv[2];
 if (!buildArg || process.argv.length !== 3) throw Error('Usage: test-component.mjs BUILD_DIRECTORY');
 const build = fs.realpathSync(buildArg), bin = path.join(build, 'bin');
 const probes = [
-    ['nexus_system_device_id', 332], ['nexus_async-schedule', 16],
+    ['nexus_game-relaunch',64], ['nexus_async-provider-contract',116], ['nexus_system_device_id', 332], ['nexus_async-schedule', 16],
     ['nexus_async-completion-lifetime', 2805], ['nexus_taskqueue-teardown', 20],
     ['nexus_taskqueue-close', 1137], ['nexus_taskqueue-contract', 1374],
     ['nexus_package-identity', 15], ['nexus_package-legacy', 139], ['nexus_package-chunks', 312],
@@ -77,7 +77,7 @@ try {
     }
     for (const [name, minimum] of probes) {
         const output = execute(name, 'wine', [path.join(bin, name + '.exe')]);
-        const summary = output.match(/(?:^|\n)(?:ASYNC |QUEUE |CHUNK METADATA )?CHECKS (\d+) FAILURES (\d+)/);
+        const summary = output.match(/(?:^|\n)(?:ASYNC PROVIDER |ASYNC |QUEUE |CHUNK METADATA )?CHECKS (\d+) FAILURES (\d+)/);
         if (!summary || Number(summary[1]) < minimum || Number(summary[2]) || /(?:^|\n)FAIL /.test(output))
             throw Error(name + ' lost required ABI coverage');
         proof.results.push({name, checks: Number(summary[1]), failures: 0});

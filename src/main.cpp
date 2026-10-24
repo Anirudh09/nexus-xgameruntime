@@ -24,6 +24,8 @@
 #include "System/XGameSave.h"
 #include "System/XPackage.h"
 #include "System/XStore.h"
+#include "System/XNetworking.h"
+#include "System/XGame.h"
 #include "System/PersistentStorage.h"
 #include "Runtime/Configuration.h"
 #include <xpersistentlocalstorage.h>
@@ -113,6 +115,8 @@ HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
         return x_threading_impl->QueryInterface( iid, out );
     }
 
+    if(IsEqualGUID(clsid,CLSID_XGameImpl))return GetGameInterface()->QueryInterface(iid,out);
+    if(IsEqualGUID(clsid,CLSID_XNetworkingImpl))return GetNetworkingInterface()->QueryInterface(iid,out);
     if (IsEqualGUID(clsid, CLSID_XStoreImpl))
         return GetStoreInterface()->QueryInterface(iid,out);
     if (IsEqualGUID(clsid, CLSID_XPackageImpl))

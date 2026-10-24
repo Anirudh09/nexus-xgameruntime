@@ -11,6 +11,8 @@ add_dependencies(xgameruntime-impl
 
 # System
 target_sources(xgameruntime-impl PRIVATE
+        System/XGame.cpp
+        System/XNetworking.cpp
         System/XStore.cpp
         System/XPackage.cpp
         System/XGameSave.cpp
