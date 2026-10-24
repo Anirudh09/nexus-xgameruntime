@@ -20,6 +20,7 @@
  */
 
 #include "XNetworking.h"
+#include "Networking/Connectivity.h"
 #include "../Runtime/Configuration.h"
 #include "winhttp.h"
 #include "wincrypt.h"
@@ -356,16 +357,7 @@ done:
 
 HRESULT WINAPI XNetworkingImpl::XNetworkingGetConnectivityHint( XNetworkingConnectivityHint *connectivityHint )
 {
-    ( void )0;
-    if ( !connectivityHint ) return E_POINTER;
-    connectivityHint->connectivityLevel = XNetworkingConnectivityLevelHint::InternetAccess;
-    connectivityHint->connectivityCost = XNetworkingConnectivityCostHint::Unrestricted;
-    connectivityHint->ianaInterfaceType = 6;
-    connectivityHint->networkInitialized = TRUE;
-    connectivityHint->approachingDataLimit = FALSE;
-    connectivityHint->overDataLimit = FALSE;
-    connectivityHint->roaming = FALSE;
-    return S_OK;
+    return nexus::networking::ReadConnectivity(connectivityHint);
 }
 
 struct connectivity_registration
@@ -397,7 +389,7 @@ static void connectivity_release( struct connectivity_registration *registration
 static void CALLBACK connectivity_initial_callback( void *context, BOOLEAN canceled )
 {
     auto registration = static_cast<connectivity_registration *>( context );
-    XNetworkingConnectivityHint hint;
+    XNetworkingConnectivityHint hint{};
     BOOL deliver;
 
     AcquireSRWLockExclusive( &connectivity_lock );

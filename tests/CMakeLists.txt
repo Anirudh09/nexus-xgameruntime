@@ -4,6 +4,7 @@ add_executable(test_xgameruntime
         Nexus/test_system.cpp
         Nexus/test_com_ownership.cpp
         Nexus/test_optional_providers.cpp
+        Nexus/test_connectivity.cpp
         Nexus/test_package_layout.cpp
         Nexus/test_async_results.cpp
         Nexus/test_thread_local.cpp
@@ -14,7 +15,7 @@ add_executable(test_xgameruntime
 target_link_libraries(test_xgameruntime
         PRIVATE
         libxgameruntime
-        GTest::gtest_main )
+        GTest::gtest_main ws2_32 iphlpapi )
 
 target_link_options(test_xgameruntime PRIVATE
         -static
