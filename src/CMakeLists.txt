@@ -81,3 +81,11 @@ target_link_options(xgameruntime PRIVATE
         -static
         -static-libgcc
         -static-libstdc++ )
+
+include( GNUInstallDirs )
+include( ${PROJECT_SOURCE_DIR}/cmake/Builtin.cmake )
+
+# Proton supplies its architecture-specific Wine PE directory explicitly.
+install( TARGETS xgameruntime
+        RUNTIME DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} )

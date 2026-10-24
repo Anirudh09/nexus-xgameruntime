@@ -42,7 +42,7 @@ jobs:
           done
           echo /usr/lib/wine >> "$GITHUB_PATH"
       - name: Check ABI and account-free CI policy
-        run: node --test scripts/test-policy.test.mjs
+        run: node --test scripts/test-policy.test.mjs scripts/test-builtin.test.mjs
       - name: Compile C++ component and synthetic tests only
         run: |
           cmake -S . -B build/component -DCMAKE_TOOLCHAIN_FILE=${{ matrix.arch }}-target.cmake -DENABLE_TESTS=ON -DNEXUS_MIGRATION_PROBES=ON -DNEXUS_WINE_SOURCE=$GITHUB_WORKSPACE/external/wine-source
