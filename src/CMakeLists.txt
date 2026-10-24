@@ -34,8 +34,13 @@ target_compile_features(xgameruntime-impl
         PUBLIC
         cxx_std_23 )
 
+set(XGAMERUNTIME_EXPORTS xgameruntime.def)
+if(MINGW AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+    set(XGAMERUNTIME_EXPORTS xgameruntime-x86.def)
+endif()
+
 add_library(xgameruntime SHARED
-        xgameruntime.def
+        ${XGAMERUNTIME_EXPORTS}
         ${IDL_GENERATED_FILES} )
 
 if(WIN32)

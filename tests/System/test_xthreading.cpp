@@ -97,7 +97,7 @@ public:
     {
     }
 
-    static R Callback(void * context, T data)
+    static R CALLBACK Callback(void * context, T data)
     {
         const CallbackThunk<T, R>* pthis = static_cast<CallbackThunk<T, R>*>(context);
         return pthis->_func(data);
@@ -117,7 +117,7 @@ public:
     {
     }
 
-    static void Callback(void * context, T data)
+    static void CALLBACK Callback(void * context, T data)
     {
         const CallbackThunk<T, void>* pthis = static_cast<CallbackThunk<T, void>*>(context);
         pthis->_func(data);
@@ -248,7 +248,7 @@ public:
         EXPECT_HRESULT_SUCCEEDED(XTaskQueueCreate(XTaskQueueDispatchMode::Manual, XTaskQueueDispatchMode::Manual, &queue));
 
         XTaskQueueRegistrationToken token;
-        EXPECT_HRESULT_SUCCEEDED(XTaskQueueRegisterMonitor(queue, this, [](void* cxt, XTaskQueueHandle, XTaskQueuePort port)
+        EXPECT_HRESULT_SUCCEEDED(XTaskQueueRegisterMonitor(queue, this, [](void* cxt, XTaskQueueHandle, XTaskQueuePort port) WINAPI
         {
             PumpedTaskQueue* pthis = (PumpedTaskQueue*)cxt;
             if (port == XTaskQueuePort::Work)
@@ -626,7 +626,7 @@ protected:
 
     static HRESULT FactorialResult(XAsyncBlock* async, _Out_writes_(1) DWORD* result)
     {
-        size_t written;
+        SIZE_T written;
         HRESULT hr = XAsyncGetResult(async, (PVOID)FactorialAsync, sizeof(DWORD), result, &written);
         if (SUCCEEDED(hr))
         {
@@ -691,7 +691,7 @@ protected:
         completionContext.signaled = CreateEvent(nullptr, FALSE, FALSE, nullptr);
         completionContext.count = 0;
 
-        auto cb = [](void* cxt, BOOLEAN)
+        auto cb = [](void* cxt, BOOLEAN) WINAPI
         {
             Context* c = (Context*)cxt;
             c->count++;
@@ -744,7 +744,7 @@ protected:
             XTaskQueueCallback* completionCallback;
         };
 
-        auto workCb = [](void* cxt, BOOLEAN cancel)
+        auto workCb = [](void* cxt, BOOLEAN cancel) WINAPI
         {
             Data* data = (Data*)cxt;
 
@@ -762,7 +762,7 @@ protected:
                                                       data->completionCallback));
         };
 
-        auto completionCb = [](void* cxt, BOOLEAN cancel)
+        auto completionCb = [](void* cxt, BOOLEAN cancel) WINAPI
         {
             Data* data = (Data*)cxt;
             EXPECT_TRUE(!data->serialized || cancel);
@@ -816,7 +816,7 @@ protected:
             HANDLE evt = CreateEvent(nullptr, TRUE, FALSE, nullptr);
             EXPECT_TRUE(evt != nullptr);
 
-            auto termCb = [](void* cxt)
+            auto termCb = [](void* cxt) WINAPI
             {
                 HANDLE h = (HANDLE)cxt;
                 SetEvent(h);
@@ -1364,7 +1364,7 @@ TEST_F(XThreadingTests, VerifyPeriodicPattern)
         XAsyncBlock* async = new XAsyncBlock{};
         async->context = controller;
         async->queue = controller->queue;
-        async->callback = [](XAsyncBlock* async)
+        async->callback = [](XAsyncBlock* async) WINAPI
         {
             Controller* pcontroller = (Controller*)async->context;
             pcontroller->callbackCount++;
@@ -1376,7 +1376,7 @@ TEST_F(XThreadingTests, VerifyPeriodicPattern)
         };
 
         EXPECT_HRESULT_SUCCEEDED(XAsyncBegin(async, controller, nullptr, nullptr,
-                                     [](XAsyncOp op, const XAsyncProviderData* data)
+                                     [](XAsyncOp op, const XAsyncProviderData* data) WINAPI
                                      {
                                          if (op == XAsyncOp::DoWork)
                                          {
@@ -1445,7 +1445,7 @@ TEST_F(XThreadingTests, VerifyRunAlotAsync)
 
 TEST_F(XThreadingTests, VerifyGetAsyncStatusNoDeadlock)
 {
-    WorkThunk cb([](XAsyncBlock*)
+    WorkThunk cb([](XAsyncBlock*) WINAPI
     {
         Sleep(10);
         return 0;
@@ -1470,7 +1470,7 @@ TEST_F(XThreadingTests, VerifyGlobalQueueUsage)
 {
     XAsyncBlock async = {};
 
-    auto nopProvider = [](XAsyncOp op, const XAsyncProviderData* d)
+    auto nopProvider = [](XAsyncOp op, const XAsyncProviderData* d) WINAPI
     {
         if (op == XAsyncOp::Cancel)
         {
@@ -1499,7 +1499,7 @@ TEST_F(XThreadingTests, VerifyFailedBeginCompletes)
     XAsyncBlock async{};
     async.queue = queue;
 
-    auto failProvider = [](XAsyncOp op, const XAsyncProviderData*)
+    auto failProvider = [](XAsyncOp op, const XAsyncProviderData*) WINAPI
     {
         return op == XAsyncOp::Begin ? E_FAIL : E_UNEXPECTED;
     };
@@ -1521,7 +1521,7 @@ TEST_F(XThreadingTests, VerifyZeroPayloadCleansUpFast)
         uint32_t cleanupCount = 0;
     };
 
-    auto emptyProvider = [](XAsyncOp op, const XAsyncProviderData* data)
+    auto emptyProvider = [](XAsyncOp op, const XAsyncProviderData* data) WINAPI
     {
         switch (op)
         {
@@ -1578,13 +1578,13 @@ TEST_F(XThreadingTests, VerifyCompleteInBegin)
     XAsyncBlock async{};
     async.queue = queue;
     async.context = &context;
-    async.callback = [](XAsyncBlock* async)
+    async.callback = [](XAsyncBlock* async) WINAPI
     {
         Context* cxt = static_cast<Context*>(async->context);
         SetEvent(cxt->evt);
     };
 
-    auto provider = [](XAsyncOp op, const XAsyncProviderData* data)
+    auto provider = [](XAsyncOp op, const XAsyncProviderData* data) WINAPI
     {
         switch (op)
         {
@@ -1611,7 +1611,7 @@ TEST_F(XThreadingTests, VerifyBeginAfterTerminate)
         XAsyncBlock async{};
         EXPECT_HRESULT_SUCCEEDED(XTaskQueueCreate(XTaskQueueDispatchMode::ThreadPool, XTaskQueueDispatchMode::ThreadPool, &async.queue));
 
-        auto provider = [](XAsyncOp, const XAsyncProviderData*)
+        auto provider = [](XAsyncOp, const XAsyncProviderData*) WINAPI
         {
             return S_OK;
         };
@@ -1633,7 +1633,7 @@ TEST_F(XThreadingTests, VerifyFailureInDoWork)
 
     constexpr static HRESULT hrSpecial = 0x8009ABCD;
 
-    auto provider = [](XAsyncOp op, const XAsyncProviderData* data)
+    auto provider = [](XAsyncOp op, const XAsyncProviderData* data) WINAPI
     {
         switch (op)
         {
@@ -1701,7 +1701,7 @@ TEST_F(XThreadingTests, VerifyDuplicatePendingResultCallsSucceed)
         }
     };
 
-    auto provider = [](XAsyncOp op, const XAsyncProviderData* data)
+    auto provider = [](XAsyncOp op, const XAsyncProviderData* data) WINAPI
     {
         Context* cxt;
 
@@ -1805,7 +1805,7 @@ TEST_F(XThreadingTests, VerifyCompositeQueue)
         EXPECT_HRESULT_SUCCEEDED(XTaskQueueCreateComposite(workStream, workStream, &composite));
 
         EXPECT_HRESULT_SUCCEEDED(XTaskQueueSubmitDelayedCallback(composite, XTaskQueuePort::Work, 0, &calls,
-                                                         [](void* context, BOOLEAN)
+                                                         [](void* context, BOOLEAN) WINAPI
                                                          {
                                                              DWORD* pcalls = (DWORD*)context;
                                                              (*pcalls)++;
@@ -1992,7 +1992,7 @@ TEST_F(XThreadingTests, VerifySubmittedCallback)
     EXPECT_HRESULT_SUCCEEDED(XTaskQueueCreate(XTaskQueueDispatchMode::Manual, XTaskQueueDispatchMode::Manual, &queue));
 
     EXPECT_HRESULT_SUCCEEDED(XTaskQueueRegisterMonitor(queue, &submitCount,
-                                               [](void* cxt, XTaskQueueHandle, XTaskQueuePort stream)
+                                               [](void* cxt, XTaskQueueHandle, XTaskQueuePort stream) WINAPI
                                                {
                                                    SubmitCount* s = (SubmitCount*)cxt;
                                                    if (stream == XTaskQueuePort::Work)
@@ -2005,7 +2005,7 @@ TEST_F(XThreadingTests, VerifySubmittedCallback)
                                                    }
                                                }, &token));
 
-    auto cb = [](void*, BOOLEAN)
+    auto cb = [](void*, BOOLEAN) WINAPI
     {
     };
 
@@ -2054,7 +2054,7 @@ TEST_F(XThreadingTests, VerifySubmitCallbackWithWait)
         XTaskQueuePort::Completion
     };
 
-    auto cb = [](void* context, BOOLEAN)
+    auto cb = [](void* context, BOOLEAN) WINAPI
     {
         ArgData* data = (ArgData*)context;
         data->Data->Times[data->Index] = GetTickCount64();
@@ -2108,13 +2108,13 @@ TEST_F(XThreadingTests, VerifyRegisterCallbackSubmitted)
 
     EXPECT_HRESULT_SUCCEEDED(XTaskQueueCreate(XTaskQueueDispatchMode::Manual, XTaskQueueDispatchMode::Manual, &queue));
 
-    auto cb = [](void* context, XTaskQueueHandle, XTaskQueuePort)
+    auto cb = [](void* context, XTaskQueueHandle, XTaskQueuePort) WINAPI
     {
         uint32_t* p = static_cast<uint32_t*>(context);
         (*p)++;
     };
 
-    auto dummy = [](void*, BOOLEAN)
+    auto dummy = [](void*, BOOLEAN) WINAPI
     {
     };
 
@@ -2164,7 +2164,7 @@ TEST_F(XThreadingTests, VerifyImmediateDispatch)
 
     EXPECT_HRESULT_SUCCEEDED(XTaskQueueCreate(XTaskQueueDispatchMode::Manual, XTaskQueueDispatchMode::Immediate, &queue));
 
-    auto callback = [](void* ptr, BOOLEAN)
+    auto callback = [](void* ptr, BOOLEAN) WINAPI
     {
         uint32_t* pint = (uint32_t*)ptr;
         (*pint)++;
@@ -2215,7 +2215,7 @@ TEST_F(XThreadingTests, VerifySerializedThreadPoolDispatch)
     EXPECT_HRESULT_SUCCEEDED(XTaskQueueCreate(XTaskQueueDispatchMode::ThreadPool, XTaskQueueDispatchMode::SerializedThreadPool,
                                       &queue));
 
-    auto callback = [](void* ptr, BOOLEAN)
+    auto callback = [](void* ptr, BOOLEAN) WINAPI
     {
         PerCallData* pdata = (PerCallData*)ptr;
         if (pdata->Index == 0)
@@ -2257,7 +2257,7 @@ TEST_F(XThreadingTests, VerifyMultithreadManualDispatch)
     // that XTaskQueueDispatch never returns with an INFINITE timeout unless the task queue is
     // getting terminated.
 
-    auto threadCallback = [](PVOID param) -> DWORD
+    auto threadCallback = [](PVOID param) WINAPI -> DWORD
     {
         XTaskQueueHandle queue = static_cast<XTaskQueueHandle>(param);
 
@@ -2273,7 +2273,7 @@ TEST_F(XThreadingTests, VerifyMultithreadManualDispatch)
 
     HANDLE threadWaits[] = {thread1.Handle(), thread2.Handle()};
 
-    auto workCallback = [](void*, BOOLEAN)
+    auto workCallback = [](void*, BOOLEAN) WINAPI
     {
     };
 
@@ -2358,7 +2358,7 @@ TEST_F(XThreadingTests, VerifyGlobalQueue)
     EXPECT_TRUE(XTaskQueueGetCurrentProcessTaskQueue(&queue));
     EXPECT_TRUE(queue != nullptr);
 
-    auto cb = [](void*, BOOLEAN)
+    auto cb = [](void*, BOOLEAN) WINAPI
     {
     };
 
@@ -2399,7 +2399,7 @@ TEST_F(XThreadingTests, VerifyCloseInTerminationForThreadPool)
     EXPECT_HRESULT_SUCCEEDED(XTaskQueueCreate(XTaskQueueDispatchMode::ThreadPool, XTaskQueueDispatchMode::ThreadPool,
                                       &data.queue));
 
-    EXPECT_HRESULT_SUCCEEDED(XTaskQueueTerminate(data.queue, false, &data, [](void* context)
+    EXPECT_HRESULT_SUCCEEDED(XTaskQueueTerminate(data.queue, false, &data, [](void* context) WINAPI
     {
         TestData* pd = (TestData*)context;
         XTaskQueueCloseHandle(pd->queue.Release());
@@ -2425,7 +2425,7 @@ TEST_F(XThreadingTests, VerifyCloseInTerminationForManual)
 
     EXPECT_HRESULT_SUCCEEDED(XTaskQueueCreate(XTaskQueueDispatchMode::Manual, XTaskQueueDispatchMode::Manual, &data.queue));
 
-    EXPECT_HRESULT_SUCCEEDED(XTaskQueueTerminate(data.queue, false, &data, [](void* context)
+    EXPECT_HRESULT_SUCCEEDED(XTaskQueueTerminate(data.queue, false, &data, [](void* context) WINAPI
     {
         TestData* pd = (TestData*)context;
         pd->terminationCalled = true;
@@ -2468,7 +2468,7 @@ TEST_F(XThreadingTests, VerifyManualDispatchAtTermination)
 
     EXPECT_HRESULT_SUCCEEDED(XTaskQueueCreate(XTaskQueueDispatchMode::Manual, XTaskQueueDispatchMode::Manual, &queue));
 
-    auto dispatcher = [](void*, XTaskQueueHandle queue, XTaskQueuePort port)
+    auto dispatcher = [](void*, XTaskQueueHandle queue, XTaskQueuePort port) WINAPI
     {
         XTaskQueueDispatch(queue, port, 0);
     };
@@ -2508,7 +2508,7 @@ TEST_F(XThreadingTests, VerifyTerminationOfCompositeQueue)
     EXPECT_HRESULT_SUCCEEDED(XTaskQueueGetPort(data.queue, XTaskQueuePort::Work, &port));
     EXPECT_HRESULT_SUCCEEDED(XTaskQueueCreateComposite(port, port, &compositeData.queue));
 
-    auto workCallback = [](void* context, BOOLEAN canceled)
+    auto workCallback = [](void* context, BOOLEAN canceled) WINAPI
     {
         TestData* pd = (TestData*)context;
         pd->workInvoked = true;
@@ -2516,28 +2516,28 @@ TEST_F(XThreadingTests, VerifyTerminationOfCompositeQueue)
         EXPECT_HRESULT_SUCCEEDED(XTaskQueueSubmitCallback(pd->queue, XTaskQueuePort::Completion, pd, pd->CompletionCallback));
     };
 
-    auto futureCallback = [](void* context, BOOLEAN canceled)
+    auto futureCallback = [](void* context, BOOLEAN canceled) WINAPI
     {
         TestData* pd = (TestData*)context;
         pd->futureInvoked = true;
         pd->futureCanceled = canceled;
     };
 
-    auto waitCallback = [](void* context, BOOLEAN canceled)
+    auto waitCallback = [](void* context, BOOLEAN canceled) WINAPI
     {
         TestData* pd = (TestData*)context;
         pd->waitInvoked = true;
         pd->waitCanceled = canceled;
     };
 
-    auto completionCallback = [](void* context, BOOLEAN canceled)
+    auto completionCallback = [](void* context, BOOLEAN canceled) WINAPI
     {
         TestData* pd = (TestData*)context;
         pd->completionInvoked = true;
         pd->completionCanceled = canceled;
     };
 
-    auto terminationCallback = [](void* context)
+    auto terminationCallback = [](void* context) WINAPI
     {
         TestData* pd = (TestData*)context;
         pd->queueTerminated = true;
@@ -2621,11 +2621,11 @@ TEST_F(XThreadingTests, VerifyQueueMonitorHasCorrectPorts)
     XTaskQueuePort queuePort = (XTaskQueuePort)(-1);
     XTaskQueuePort compositeQueuePort = (XTaskQueuePort)(-1);
 
-    auto cb = [](void*, BOOLEAN)
+    auto cb = [](void*, BOOLEAN) WINAPI
     {
     };
 
-    auto monitorCallback = [](void* context, XTaskQueueHandle, XTaskQueuePort port)
+    auto monitorCallback = [](void* context, XTaskQueueHandle, XTaskQueuePort port) WINAPI
     {
         XTaskQueuePort* pp = (XTaskQueuePort*)context;
         *pp = port;
@@ -2672,12 +2672,12 @@ TEST_F(XThreadingTests, VerifyNestedQueueDispatchOrder)
 
     NextStep(&step, 0, L"Submitting Tasks");
 
-    EXPECT_HRESULT_SUCCEEDED(XTaskQueueSubmitDelayedCallback(outer, XTaskQueuePort::Work, 3000, &step, [](void* context, BOOLEAN)
+    EXPECT_HRESULT_SUCCEEDED(XTaskQueueSubmitDelayedCallback(outer, XTaskQueuePort::Work, 3000, &step, [](void* context, BOOLEAN) WINAPI
     {
         NextStep(context, 6, L"Delayed task on outer queue");
     }));
 
-    EXPECT_HRESULT_SUCCEEDED(XTaskQueueSubmitCallback(inner, XTaskQueuePort::Work, &step, [](void* context, BOOLEAN)
+    EXPECT_HRESULT_SUCCEEDED(XTaskQueueSubmitCallback(inner, XTaskQueuePort::Work, &step, [](void* context, BOOLEAN) WINAPI
     {
         NextStep(context, 2, L"Task on inner queue");
     }));
@@ -2807,7 +2807,7 @@ TEST_F(XThreadingTests, VerifyCompositeTerminationRaceRepro)
                         delegateQueue,
                         XTaskQueuePort::Work,
                         &workCallbackCount,
-                        [](void* context, BOOLEAN canceled)
+                        [](void* context, BOOLEAN canceled) WINAPI
                         {
                             if (!canceled)
                             {
@@ -2833,7 +2833,7 @@ TEST_F(XThreadingTests, VerifyCompositeTerminationRaceRepro)
                     delegateQueue,
                     avoidRaceMode, // default is wait=false: delegate terminations are independent
                     &delegateTerminationsRemaining,
-                    [](void* context)
+                    [](void* context) WINAPI
                     {
                         // Decrement when this delegate's termination completes
                         std::atomic<int>* counter = static_cast<std::atomic<int>*>(context);
