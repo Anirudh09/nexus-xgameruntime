@@ -132,7 +132,7 @@ ParseMessage(
 
             if ( strlen( format + iterator ) >= 8 && strncmp( format + iterator, "$VERSION", 8 ) == 0 )
             {
-                auto const versionString = XGAMERUNTIME_VERSION;
+                const char *const versionString = XGAMERUNTIME_VERSION;
                 fmtSize -= strlen( "$VERSION" );
                 fmtSize += strlen( versionString );
 
