@@ -2,6 +2,7 @@ configure_file(Nexus/MicrosoftGame.config "${CMAKE_BINARY_DIR}/bin/MicrosoftGame
 
 add_executable(test_xgameruntime
         Nexus/test_system.cpp
+        Nexus/test_com_ownership.cpp
         Nexus/test_thread_local.cpp
         Nexus/test_async_wait.cpp
         System/test_xthreading.cpp

@@ -35,7 +35,6 @@ public:
         *out = nullptr;
 
         if ( iid == __uuidof( IUnknown ) ||
-             iid == __uuidof( IInspectable ) ||
              iid == __uuidof( IAgileObject ) ||
              iid == __uuidof( IXThreadingImpl ) )
         {

@@ -147,7 +147,6 @@ TaskQueuePortImpl::QueryInterface(
     *out = nullptr;
 
     if ( iid == __uuidof( IUnknown ) ||
-         iid == __uuidof( IInspectable ) ||
          iid == __uuidof( IAgileObject ) ||
          iid == __uuidof( TaskQueuePortImpl ) )
     {
@@ -1227,7 +1226,6 @@ TaskQueueImpl::QueryInterface(
     *out = nullptr;
 
     if ( iid == __uuidof( IUnknown ) ||
-         iid == __uuidof( IInspectable ) ||
          iid == __uuidof( IAgileObject ) ||
          iid == __uuidof( TaskQueueImpl ) )
     {
@@ -1562,7 +1560,6 @@ TaskQueuePortContextImpl::QueryInterface(
     *out = nullptr;
 
     if ( iid == __uuidof( IUnknown ) ||
-         iid == __uuidof( IInspectable ) ||
          iid == __uuidof( IAgileObject ) ||
          iid == __uuidof( TaskQueuePortContextImpl ) )
     {
