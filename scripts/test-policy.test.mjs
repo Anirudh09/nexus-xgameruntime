@@ -186,3 +186,15 @@ test('relaunch and async-provider contracts remain byte-identical and account-fr
         assert.equal(crypto.createHash('sha256').update(read('tests/Nexus/'+name)).digest('hex'),expected,name);
     assert.match(read('tests/Nexus/game-relaunch-probe.c'),/Never calls XUserAdd/);
 });
+
+test('optional API families use actual C++ providers without fabricated availability or event tokens',()=>{
+    assert.doesNotMatch(read('src/System/XGameRuntimeFeature.cpp'),/Always assume/);
+    assert.match(read('src/System/XGameRuntimeFeature.cpp'),/default:[\s\S]*return FALSE/);
+    for(const name of ['XGameActivation','XGameInvite','XGameProtocol'])
+    {
+        const source=read('src/System/'+name+'.cpp');
+        assert.doesNotMatch(source,/InterlockedIncrement|return S_OK/);
+        assert.match(source,/token->token\s*=\s*0/);
+    }
+    assert.match(read('tests/Nexus/test_optional_providers.cpp'),/DisplayAndLauncherShareCanonicalIUnknown/);
+});

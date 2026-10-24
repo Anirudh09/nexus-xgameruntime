@@ -13,6 +13,17 @@ add_dependencies(xgameruntime-impl
 target_sources(xgameruntime-impl PRIVATE
         System/XGame.cpp
         System/XNetworking.cpp
+        System/XAccessibility.cpp
+        System/XAppCapture.cpp
+        System/XGameActivation.cpp
+        System/XGameEvent.cpp
+        System/XGameInvite.cpp
+        System/XGameProtocol.cpp
+        System/XGameStreaming.cpp
+        System/XGameUi.cpp
+        System/XGameRuntimeFeature.cpp
+        System/XDisplay.cpp
+        System/XError.cpp
         System/XStore.cpp
         System/XPackage.cpp
         System/XGameSave.cpp

@@ -24,6 +24,17 @@
 #include "System/XGameSave.h"
 #include "System/XPackage.h"
 #include "System/XStore.h"
+#include "System/XDisplay.h"
+#include "System/XError.h"
+#include "System/XGameRuntimeFeature.h"
+#include "System/XGameUi.h"
+#include "System/XGameStreaming.h"
+#include "System/XGameProtocol.h"
+#include "System/XGameInvite.h"
+#include "System/XGameEvent.h"
+#include "System/XGameActivation.h"
+#include "System/XAppCapture.h"
+#include "System/XAccessibility.h"
 #include "System/XNetworking.h"
 #include "System/XGame.h"
 #include "System/PersistentStorage.h"
@@ -115,8 +126,36 @@ HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
         return x_threading_impl->QueryInterface( iid, out );
     }
 
-    if(IsEqualGUID(clsid,CLSID_XGameImpl))return GetGameInterface()->QueryInterface(iid,out);
-    if(IsEqualGUID(clsid,CLSID_XNetworkingImpl))return GetNetworkingInterface()->QueryInterface(iid,out);
+    if ( IsEqualGUID( clsid, CLSID_XGameImpl ) )
+        return GetGameInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XNetworkingImpl ) )
+        return GetNetworkingInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XAccessibilityImpl ) )
+        return GetAccessibilityInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XAppCaptureImpl ) )
+        return GetAppCaptureInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XAppCaptureMetadataImpl ) )
+        return GetAppCaptureMetadataInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XGameActivationImpl ) )
+        return GetGameActivationInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XGameEventImpl ) )
+        return GetGameEventInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XGameInviteImpl ) )
+        return GetGameInviteInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XGameProtocolImpl ) )
+        return GetGameProtocolInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XGameStreamingImpl ) )
+        return GetGameStreamingInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XGameUiImpl ) )
+        return GetGameUiInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XGameRuntimeFeatureImpl ) )
+        return GetGameRuntimeFeatureInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XDisplayImpl ) )
+        return GetDisplayInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XLauncherImpl ) )
+        return GetLauncherInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XErrorImpl ) )
+        return GetErrorInterface()->QueryInterface( iid, out );
     if (IsEqualGUID(clsid, CLSID_XStoreImpl))
         return GetStoreInterface()->QueryInterface(iid,out);
     if (IsEqualGUID(clsid, CLSID_XPackageImpl))
