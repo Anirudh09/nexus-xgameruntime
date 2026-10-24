@@ -58,6 +58,9 @@ struct AsyncState
     std::condition_variable waitCondition;
     bool waitSatisfied = false;
     HANDLE waitEvent = nullptr;
+    std::atomic<HRESULT> completionResult{E_PENDING};
+    AsyncState* completionNext = nullptr;
+    bool completionRegistered = false;
 
     const void* identity = nullptr;
     const char* identityName = nullptr;
@@ -194,6 +197,75 @@ public:
 private:
     AsyncState* m_state;
 };
+
+// Completed zero-payload operations detach their state from XAsyncBlock before
+// dispatching completion. Keep an intrusive wait reference outside caller memory
+// until the callback returns, so waiting cannot skip completion or read a block
+// that a completion callback has already freed or reused.
+static std::mutex completionWaitLock;
+static AsyncState* completionWaitHead = nullptr;
+static thread_local AsyncState* currentCompletion = nullptr;
+
+static void RegisterCompletionWait(const AsyncStateRef& state)
+{
+    std::lock_guard<std::mutex> guard(completionWaitLock);
+    if (state->completionRegistered) return;
+    state->AddRef();
+    state->completionNext = completionWaitHead;
+    completionWaitHead = state.Get();
+    state->completionRegistered = true;
+}
+
+static AsyncStateRef FindCompletionWait(XAsyncBlock* block)
+{
+    std::lock_guard<std::mutex> guard(completionWaitLock);
+    for (auto* item = completionWaitHead; item; item = item->completionNext)
+        if (item->userAsyncBlock == block) return AsyncStateRef(item);
+    return {};
+}
+
+static void RemoveCompletionWait(AsyncState* state)
+{
+    bool removed = false;
+    {
+        std::lock_guard<std::mutex> guard(completionWaitLock);
+        for (auto** item = &completionWaitHead; *item; item = &(*item)->completionNext)
+            if (*item == state)
+            {
+                *item = state->completionNext;
+                state->completionNext = nullptr;
+                state->completionRegistered = false;
+                removed = true;
+                break;
+            }
+    }
+    if (removed) state->Release();
+}
+
+static void RetirePreviousCompletionWait(XAsyncBlock* block)
+{
+    AsyncState* retired = nullptr;
+    {
+        std::lock_guard<std::mutex> guard(completionWaitLock);
+        auto** item = &completionWaitHead;
+        while (*item)
+        {
+            auto* state = *item;
+            if (state->userAsyncBlock != block) { item = &state->completionNext; continue; }
+            *item = state->completionNext;
+            state->completionRegistered = false;
+            state->completionNext = retired;
+            retired = state;
+        }
+    }
+    while (retired)
+    {
+        auto* state = retired;
+        retired = retired->completionNext;
+        state->completionNext = nullptr;
+        state->Release();
+    }
+}
 
 class AsyncBlockInternalGuard
 {
@@ -404,6 +476,7 @@ static HRESULT AllocState(XAsyncBlock* asyncBlock, size_t contextSize)
         RETURN_HR(E_INVALIDARG);
     }
 
+    RetirePreviousCompletionWait(asyncBlock);
     for (auto i = 0u; i < sizeof(asyncBlock->internal); ++i)
     {
         asyncBlock->internal[i] = 0;
@@ -496,6 +569,7 @@ static void SignalWait(AsyncStateRef const& state)
     {
         XTaskQueueResumeTermination(state->queue);
     }
+    RemoveCompletionWait(state.Get());
 }
 
 static void CALLBACK CompletionCallback(
@@ -508,9 +582,18 @@ static void CALLBACK CompletionCallback(
     state.Attach(static_cast<AsyncState*>(context));
 
     XAsyncBlock* asyncBlock = state->userAsyncBlock;
-    if (state->providerAsyncBlock.callback != nullptr)
+    struct CompletionScope
     {
-        state->providerAsyncBlock.callback(asyncBlock);
+        AsyncState* previous;
+        explicit CompletionScope(AsyncState* value) : previous(currentCompletion) { currentCompletion = value; }
+        ~CompletionScope() { currentCompletion = previous; }
+    };
+    {
+        CompletionScope scope(state.Get());
+        if (state->providerAsyncBlock.callback != nullptr)
+        {
+            state->providerAsyncBlock.callback(asyncBlock);
+        }
     }
 
     SignalWait(state);
@@ -574,6 +657,7 @@ HRESULT WINAPI XAsyncGetStatus(
         state = internal.GetState();
     }
 
+    if (wait && state == nullptr) state = FindCompletionWait(asyncBlock);
     if (wait)
     {
         if (state == nullptr)
@@ -581,7 +665,7 @@ HRESULT WINAPI XAsyncGetStatus(
             assert(result != E_PENDING);
             RETURN_HR_IF(E_INVALIDARG, result == E_PENDING);
         }
-        else
+        else if (currentCompletion != state.Get())
         {
             if (s_AsyncLibEnablePumpingWait)
             {
@@ -603,10 +687,7 @@ HRESULT WINAPI XAsyncGetStatus(
                 }
             }
 
-            {
-                AsyncBlockInternalGuard internal{ asyncBlock };
-                result = internal.GetStatus();
-            }        
+            result = state->completionResult.load();
         }
     }
 
@@ -840,6 +921,8 @@ void WINAPI XAsyncComplete(
         if (completedNow)
         {
             state->providerData.bufferSize = requiredBufferSize;
+            state->completionResult.store(result);
+            if (state->providerAsyncBlock.callback) RegisterCompletionWait(state);
         }
     }
 
