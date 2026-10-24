@@ -43,10 +43,16 @@ public:
     unsigned backendCalls = 0, httpCalls = 0, rawCalls = 0, unexpected = 0;
     bool currentFails = false, titleToken = true;
     bool blockBackend = false;
+    bool blockAuthorization = false, refuseAuthorization = false;
+    DWORD authorizationThread = 0;
+    HANDLE authorizationEntered = CreateEventW( nullptr, TRUE, FALSE, nullptr );
+    HANDLE authorizationContinue = CreateEventW( nullptr, TRUE, FALSE, nullptr );
     HANDLE backendEntered = CreateEventW( nullptr, TRUE, FALSE, nullptr );
     HANDLE backendContinue = CreateEventW( nullptr, TRUE, FALSE, nullptr );
     ~SyntheticTransport()
     {
+        CloseHandle( authorizationEntered );
+        CloseHandle( authorizationContinue );
         CloseHandle( backendEntered );
         CloseHandle( backendContinue );
     }
@@ -95,7 +101,9 @@ public:
         *output = nullptr;
         *length = 0;
         if ( !wcscmp( url, L"https://title.mgt.xboxlive.com/titles/default/endpoints?type=1" ) )
+        {
             return Reply( Endpoints(), output, length );
+        }
         if ( !wcscmp( url, L"https://device.auth.xboxlive.com/device/authenticate" ) && !wcscmp( method, L"POST" ) )
             return Reply( R"({"Token":"synthetic-device-token"})", output, length );
         if ( !wcscmp( url, L"https://sisu.xboxlive.com/authorize" ) && !wcscmp( method, L"POST" ) )
@@ -126,6 +134,13 @@ public:
             ++unexpected;
             return E_FAIL;
         }
+        if ( blockAuthorization )
+        {
+            authorizationThread = GetCurrentThreadId();
+            SetEvent( authorizationEntered );
+            if ( WaitForSingleObject( authorizationContinue, 5000 ) != WAIT_OBJECT_0 ) return E_ABORT;
+        }
+        if ( refuseAuthorization ) return E_FAIL;
         signedBodies.emplace_back( static_cast<const char *>( body ), size );
         *status = xstsStatus;
         std::string response = R"({"Token":"synthetic-xsts","DisplayClaims":{"xui":[{"xid":")" + claimXid +
@@ -625,4 +640,241 @@ TEST( NexusAuthentication, CancelledBlockCanBeReusedWhileTransportIsStillBlocked
     EXPECT_FALSE( threading->XTaskQueueDispatch( queue, XTaskQueuePort::Completion, 0 ) );
     threading->XTaskQueueCloseHandle( queue );
     threading->Release();
+}
+
+TEST( NexusAuthentication, PublicTokenProvidersRejectMissingArgumentsBeforeReading )
+{
+    SyntheticTransport transport;
+    XUserImpl api( transport );
+    auto user = CreateUser( transport );
+    XAsyncBlock block{};
+    const auto options = XUserGetTokenAndSignatureOptions::None;
+    EXPECT_EQ( api.XUserGetTokenAndSignatureAsync( nullptr, options, "GET", "https://service.example.invalid/api", 0,
+                                                   nullptr, 0, nullptr, &block ),
+               E_INVALIDARG );
+    EXPECT_EQ( api.XUserGetTokenAndSignatureAsync( user.get(), options, nullptr, "https://service.example.invalid/api",
+                                                   0, nullptr, 0, nullptr, &block ),
+               E_INVALIDARG );
+    EXPECT_EQ(
+        api.XUserGetTokenAndSignatureAsync( user.get(), options, "GET", nullptr, 0, nullptr, 0, nullptr, &block ),
+        E_INVALIDARG );
+    EXPECT_EQ( api.XUserGetTokenAndSignatureAsync( user.get(), options, "GET", "https://service.example.invalid/api", 0,
+                                                   nullptr, 0, nullptr, nullptr ),
+               E_INVALIDARG );
+    EXPECT_EQ( api.XUserGetTokenAndSignatureAsync( user.get(), options, "GET", "https://service.example.invalid/api", 1,
+                                                   nullptr, 0, nullptr, &block ),
+               E_INVALIDARG );
+    EXPECT_EQ( api.XUserGetTokenAndSignatureAsync( user.get(), options, "GET", "https://service.example.invalid/api", 0,
+                                                   nullptr, 1, nullptr, &block ),
+               E_INVALIDARG );
+    EXPECT_EQ( api.XUserGetTokenAndSignatureAsync( user.get(), options, "GET", "https://service.example.invalid/api", 0,
+                                                   nullptr, SIZE_MAX, "body", &block ),
+               E_INVALIDARG );
+    EXPECT_EQ( api.XUserGetTokenAndSignatureUtf16Async(
+                   nullptr, options, L"GET", L"https://service.example.invalid/api", 0, nullptr, 0, nullptr, &block ),
+               E_INVALIDARG );
+    EXPECT_EQ( api.XUserGetTokenAndSignatureUtf16Async( user.get(), options, nullptr,
+                                                        L"https://service.example.invalid/api", 0, nullptr, 0, nullptr,
+                                                        &block ),
+               E_INVALIDARG );
+    EXPECT_EQ(
+        api.XUserGetTokenAndSignatureUtf16Async( user.get(), options, L"GET", nullptr, 0, nullptr, 0, nullptr, &block ),
+        E_INVALIDARG );
+    EXPECT_EQ( api.XUserGetTokenAndSignatureUtf16Async( user.get(), options, L"GET",
+                                                        L"https://service.example.invalid/api", 1, nullptr, 0, nullptr,
+                                                        &block ),
+               E_INVALIDARG );
+    EXPECT_EQ( api.XUserGetTokenAndSignatureUtf16Async( user.get(), options, L"GET",
+                                                        L"https://service.example.invalid/api", 0, nullptr, SIZE_MAX,
+                                                        "body", &block ),
+               E_INVALIDARG );
+    EXPECT_EQ( transport.backendCalls + transport.httpCalls + transport.rawCalls, 0u );
+    EXPECT_EQ( user->ref, 1 );
+}
+
+TEST( NexusAuthentication, PublicTokenResultsAreTerminatedRetryableAndEncodingBound )
+{
+    Apartment apartment;
+    for ( bool wide : { false, true } )
+        for ( bool signedRequest : { false, true } )
+        {
+            SyntheticTransport transport;
+            XUserImpl api( transport );
+            auto user = CreateUser( transport );
+            ASSERT_EQ( user->InitializeNetwork( XUserAddOptions::AddDefaultUserSilently ), S_OK );
+            user->initDone = 1;
+            user->initResult = S_OK;
+            if ( !signedRequest )
+                for ( UINT i = 0; i < user->endpointsLen; ++i )
+                    user->endpoints[i].policy = nullptr;
+            IXThreadingImpl *threads = nullptr;
+            ASSERT_EQ( QueryApiImpl( CLSID_XThreadingImpl, __uuidof( IXThreadingImpl ),
+                                     reinterpret_cast<void **>( &threads ) ),
+                       S_OK );
+            XTaskQueueHandle queue = nullptr;
+            ASSERT_EQ(
+                threads->XTaskQueueCreate( XTaskQueueDispatchMode::Manual, XTaskQueueDispatchMode::Manual, &queue ),
+                S_OK );
+            XAsyncBlock block{};
+            block.queue = queue;
+            auto hr = wide
+                          ? api.XUserGetTokenAndSignatureUtf16Async( user.get(), XUserGetTokenAndSignatureOptions::None,
+                                                                     L"GET", L"https://service.example.invalid/api", 0,
+                                                                     nullptr, 0, nullptr, &block )
+                          : api.XUserGetTokenAndSignatureAsync( user.get(), XUserGetTokenAndSignatureOptions::None,
+                                                                "GET", "https://service.example.invalid/api", 0,
+                                                                nullptr, 0, nullptr, &block );
+            ASSERT_EQ( hr, S_OK );
+            auto start = GetTickCount64();
+            ASSERT_TRUE( threads->XTaskQueueDispatch( queue, XTaskQueuePort::Work, 0 ) );
+            EXPECT_LT( GetTickCount64() - start, 200u );
+            ASSERT_EQ( threads->XAsyncGetStatus( &block, TRUE ), S_OK );
+            SIZE_T size = 0, used = 99;
+            ASSERT_EQ( threads->XAsyncGetResultSize( &block, &size ), S_OK );
+            std::vector<BYTE> bytes( size + 16, 0x7f );
+            if ( wide )
+            {
+                XUserGetTokenAndSignatureData *wrong = reinterpret_cast<XUserGetTokenAndSignatureData *>( 1 );
+                EXPECT_EQ( api.XUserGetTokenAndSignatureResult( &block, size, bytes.data(), &wrong, &used ),
+                           E_INVALIDARG );
+                EXPECT_EQ( wrong, nullptr );
+                EXPECT_EQ( used, 0u );
+                XUserGetTokenAndSignatureUtf16Data *result =
+                    reinterpret_cast<XUserGetTokenAndSignatureUtf16Data *>( 1 );
+                EXPECT_EQ( api.XUserGetTokenAndSignatureUtf16Result( &block, size - 1, bytes.data(), &result, &used ),
+                           HRESULT_FROM_WIN32( ERROR_INSUFFICIENT_BUFFER ) );
+                EXPECT_EQ( result, nullptr );
+                EXPECT_EQ( api.XUserGetTokenAndSignatureUtf16Result( &block, size, bytes.data(), nullptr, &used ),
+                           E_POINTER );
+                ASSERT_EQ( api.XUserGetTokenAndSignatureUtf16Result( &block, size, bytes.data(), &result, &used ),
+                           S_OK );
+                ASSERT_NE( result, nullptr );
+                EXPECT_EQ( used, size );
+                EXPECT_EQ( result->signatureCount, signedRequest ? 105u : 1u );
+                ASSERT_NE( result->signature, nullptr );
+                EXPECT_EQ( result->signature[result->signatureCount - 1], 0 );
+                EXPECT_EQ( wcslen( result->signature ), signedRequest ? 104u : 0u );
+                ASSERT_NE( result->token, nullptr );
+                EXPECT_EQ( result->token[result->tokenCount - 1], 0 );
+                EXPECT_GE( reinterpret_cast<const BYTE *>( result->signature ), bytes.data() );
+                EXPECT_LE( reinterpret_cast<const BYTE *>( result->signature + result->signatureCount ),
+                           bytes.data() + size );
+            }
+            else
+            {
+                XUserGetTokenAndSignatureUtf16Data *wrong = reinterpret_cast<XUserGetTokenAndSignatureUtf16Data *>( 1 );
+                EXPECT_EQ( api.XUserGetTokenAndSignatureUtf16Result( &block, size, bytes.data(), &wrong, &used ),
+                           E_INVALIDARG );
+                EXPECT_EQ( wrong, nullptr );
+                EXPECT_EQ( used, 0u );
+                XUserGetTokenAndSignatureData *result = reinterpret_cast<XUserGetTokenAndSignatureData *>( 1 );
+                EXPECT_EQ( api.XUserGetTokenAndSignatureResult( &block, size - 1, bytes.data(), &result, &used ),
+                           HRESULT_FROM_WIN32( ERROR_INSUFFICIENT_BUFFER ) );
+                EXPECT_EQ( result, nullptr );
+                EXPECT_EQ( api.XUserGetTokenAndSignatureResult( &block, size, bytes.data(), nullptr, &used ),
+                           E_POINTER );
+                ASSERT_EQ( api.XUserGetTokenAndSignatureResult( &block, size, bytes.data(), &result, &used ), S_OK );
+                ASSERT_NE( result, nullptr );
+                EXPECT_EQ( used, size );
+                EXPECT_EQ( result->signatureSize, signedRequest ? 105u : 1u );
+                ASSERT_NE( result->signature, nullptr );
+                EXPECT_EQ( result->signature[result->signatureSize - 1], 0 );
+                EXPECT_EQ( strlen( result->signature ), signedRequest ? 104u : 0u );
+                ASSERT_NE( result->token, nullptr );
+                EXPECT_EQ( result->token[result->tokenSize - 1], 0 );
+                EXPECT_GE( reinterpret_cast<const BYTE *>( result->signature ), bytes.data() );
+                EXPECT_LE( reinterpret_cast<const BYTE *>( result->signature + result->signatureSize ),
+                           bytes.data() + size );
+            }
+            for ( SIZE_T i = size; i < bytes.size(); ++i )
+                EXPECT_EQ( bytes[i], 0x7f );
+            while ( threads->XTaskQueueDispatch( queue, XTaskQueuePort::Completion, 0 ) )
+            {
+            }
+            threads->XTaskQueueCloseHandle( queue );
+            threads->Release();
+            // Publication can precede the retained worker returning. Require
+            // its original final reference balance after a bounded drain.
+            const auto deadline = GetTickCount64() + 5000;
+            while ( InterlockedCompareExchange( &user->ref, 0, 0 ) != 1 && GetTickCount64() < deadline )
+                Sleep( 1 );
+            EXPECT_EQ( InterlockedCompareExchange( &user->ref, 0, 0 ), 1 );
+            EXPECT_EQ( transport.unexpected, 0u );
+        }
+}
+
+static void WINAPI CountTokenCompletion( XAsyncBlock *async )
+{
+    InterlockedIncrement( static_cast<LONG *>( async->context ) );
+}
+
+TEST( NexusAuthentication, TokenAndPictureWorkersPreserveManualDispatchAndCancelledOwnership )
+{
+    Apartment apartment;
+    for ( unsigned mode = 0; mode < 6; ++mode )
+    {
+        SyntheticTransport transport;
+        XUserImpl api( transport );
+        auto user = CreateUser( transport );
+        ASSERT_EQ( user->InitializeNetwork( XUserAddOptions::AddDefaultUserSilently ), S_OK );
+        user->initDone = 1;
+        user->initResult = S_OK;
+        transport.blockAuthorization = true;
+        transport.refuseAuthorization = true;
+        IXThreadingImpl *threads = nullptr;
+        ASSERT_EQ(
+            QueryApiImpl( CLSID_XThreadingImpl, __uuidof( IXThreadingImpl ), reinterpret_cast<void **>( &threads ) ),
+            S_OK );
+        XTaskQueueHandle queue = nullptr;
+        ASSERT_EQ( threads->XTaskQueueCreate( XTaskQueueDispatchMode::Manual, XTaskQueueDispatchMode::Manual, &queue ),
+                   S_OK );
+        LONG completions = 0;
+        XAsyncBlock block{};
+        block.queue = queue;
+        block.context = &completions;
+        block.callback = CountTokenCompletion;
+        auto result = mode >= 4 ? api.XUserGetGamerPictureAsync( user.get(), XUserGamerPictureSize::Medium, &block )
+                      : mode & 1
+                          ? api.XUserGetTokenAndSignatureUtf16Async( user.get(), XUserGetTokenAndSignatureOptions::None,
+                                                                     L"GET", L"https://service.example.invalid/api", 0,
+                                                                     nullptr, 0, nullptr, &block )
+                          : api.XUserGetTokenAndSignatureAsync( user.get(), XUserGetTokenAndSignatureOptions::None,
+                                                                "GET", "https://service.example.invalid/api", 0,
+                                                                nullptr, 0, nullptr, &block );
+        ASSERT_EQ( result, S_OK );
+        auto start = GetTickCount64();
+        EXPECT_TRUE( threads->XTaskQueueDispatch( queue, XTaskQueuePort::Work, 0 ) );
+        EXPECT_LT( GetTickCount64() - start, 200u );
+        EXPECT_EQ( WaitForSingleObject( transport.authorizationEntered, 2000 ), WAIT_OBJECT_0 );
+        EXPECT_NE( transport.authorizationThread, GetCurrentThreadId() );
+        EXPECT_EQ( threads->XAsyncGetStatus( &block, FALSE ), E_PENDING );
+        const bool cancel = mode == 2 || mode == 3 || mode == 5;
+        if ( cancel )
+        {
+            threads->XAsyncCancel( &block );
+            // Match the original forced-terminal cleanup contract. Do not
+            // claim that ordinary cancellation aborts a network transport.
+            threads->XAsyncComplete( &block, E_ABORT, 0 );
+            while ( threads->XTaskQueueDispatch( queue, XTaskQueuePort::Completion, 0 ) )
+            {
+            }
+            EXPECT_EQ( threads->XAsyncGetStatus( &block, FALSE ), E_ABORT );
+            EXPECT_EQ( InterlockedCompareExchange( &user->ref, 0, 0 ), 2 );
+        }
+        SetEvent( transport.authorizationContinue );
+        start = GetTickCount64();
+        while ( ( InterlockedCompareExchange( &user->ref, 0, 0 ) != 1 ||
+                  !InterlockedCompareExchange( &completions, 0, 0 ) ) &&
+                GetTickCount64() - start < 5000 )
+        {
+            threads->XTaskQueueDispatch( queue, XTaskQueuePort::Completion, 0 );
+            Sleep( 1 );
+        }
+        EXPECT_EQ( completions, 1 );
+        EXPECT_EQ( InterlockedCompareExchange( &user->ref, 0, 0 ), 1 );
+        EXPECT_EQ( threads->XAsyncGetStatus( &block, FALSE ), cancel ? E_ABORT : E_FAIL );
+        threads->XTaskQueueCloseHandle( queue );
+        threads->Release();
+        EXPECT_EQ( transport.unexpected, 0u );
+    }
 }

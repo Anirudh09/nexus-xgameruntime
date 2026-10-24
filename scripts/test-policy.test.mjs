@@ -73,7 +73,7 @@ test('authentication compiles pinned WinRT declarations and never exports transp
     assert.match(read('cmake/Winrt.cmake'),/file\(SHA256/);
     assert.match(read('cmake/Winrt.cmake'),/FATAL_ERROR "Pinned WinRT source mismatch/);
     assert.doesNotMatch(read('src/xgameruntime.def')+read('src/xgameruntime-x86.def'),/Transport|Synthetic|TestHook/);
-    assert.match(read('scripts/test-authentication.mjs'),/Number\(match\[1\]\)>=19/);
+    assert.match(read('scripts/test-authentication.mjs'),/Number\(match\[1\]\)>=22/);
     assert.match(read('scripts/test-authentication.mjs'),/realAccounts:false,realCloud:false,fullRuntime:false/);
     assert.match(read('tests/Nexus/test_user.cpp'),/There is deliberately no network fallback/);
 });
@@ -220,6 +220,15 @@ test('all original user fixture assertions remain in actual C++ source tests',()
     assert.match(read('tests/Nexus/user-audio.cpp'),/public IMMDeviceEnumerator/);
     assert.match(read('tests/Nexus/windows-account-metadata.cpp'),/System\/User\/Tickets.h/);
 });
+test('public token encodings have distinct identities and validate inputs before allocation',()=>{
+    const source=read('src/System/XUser.cpp');
+    assert.match(source,/XAsyncBegin\( async, context, &tokenSignatureIdentity/);
+    assert.match(source,/XAsyncBegin\( async, context, &tokenSignatureUtf16Identity/);
+    assert.match(source,/AddTokenContextSize/);
+    assert.doesNotMatch(source,/contextSize \+ headersSize/);
+    assert.match(read('tests/Nexus/test_user.cpp'),/TokenAndPictureWorkersPreserveManualDispatchAndCancelledOwnership/);
+});
+
 test('privilege result APIs never decode opaque async bytes or export an identity hook',()=>{
     assert.doesNotMatch(read('src/System/User/Privileges.h'),/async->internal/);
     assert.match(read('src/System/User/Privileges.h'),/GetAsyncStatusForIdentity/);
