@@ -57,8 +57,6 @@
 #include "windows.foundation.h"
 #define WIDL_using_Windows_Globalization
 #include "windows.globalization.h"
-#define WIDL_using_Windows_System_Profile
-#include "windows.system.profile.h"
 
 #define E_ILLEGAL_METHOD_CALL                              _HRESULT_TYPEDEF_(0x8000000E)
 
