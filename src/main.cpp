@@ -21,6 +21,7 @@
 #include <initguid.h>
 #include "private.h"
 #include "System/XSystem.h"
+#include "System/XGameSave.h"
 #include "System/PersistentStorage.h"
 #include "Runtime/Configuration.h"
 #include <xpersistentlocalstorage.h>
@@ -110,6 +111,8 @@ HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
         return x_threading_impl->QueryInterface( iid, out );
     }
 
+    if (IsEqualGUID(clsid, CLSID_XGameSaveImpl))
+        return GetGameSaveInterface()->QueryInterface(iid,out);
     if (IsEqualGUID(clsid, CLSID_XUserImpl))
         return x_user_impl->QueryInterface(iid, out);
     if (IsEqualGUID(clsid, CLSID_XUserDeviceImpl))

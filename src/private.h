@@ -53,6 +53,7 @@
 #include <xgameruntimefeature.h>
 #include <xnetworking.h>
 #include <xuser.h>
+#include <xgamesave.h>
 #include <xasync.h>
 #include <xasyncprovider.h>
 #include <xtaskqueue.h>

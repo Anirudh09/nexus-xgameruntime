@@ -19,6 +19,7 @@ struct XmlNode
     std::string_view attribute( std::string_view key ) const noexcept;
 };
 HRESULT ParseXml( std::string_view bytes, XmlNode &root ) noexcept;
+HRESULT SerializeXml( const XmlNode &root, std::string &output ) noexcept;
 HRESULT ReadXmlFile( const std::wstring &path, XmlNode &root ) noexcept;
 HRESULT ToUtf8( std::wstring_view input, std::string &output ) noexcept;
 HRESULT ToUtf16( std::string_view input, std::wstring &output ) noexcept;

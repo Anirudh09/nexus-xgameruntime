@@ -6,3 +6,5 @@ EXPORTS
     InitializeApiImplEx2=InitializeApiImplEx2@16
     UninitializeApiImpl=UninitializeApiImpl@0
     XErrorReport=XErrorReport@8
+
+XodusSaveFilesMonitor=XodusSaveFilesMonitor@16

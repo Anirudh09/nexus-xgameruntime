@@ -128,3 +128,36 @@ TEST( NexusConfiguration, FailedInitializationIsRetryableThenPublishesAtomically
     EXPECT_EQ( nexus::GetGameConfiguration(), current );
     SetEnvironmentVariableA( "NEXUS_RELATED_PRODUCT_IDS", nullptr );
 }
+
+TEST( NexusConfiguration, InheritedSaveConfigurationRoundTripPreservesActualManifestValues )
+{
+    nexus::XmlNode original, reloaded;
+    std::string bytes;
+    ASSERT_EQ( nexus::ParseXml( "<Game><Identity Name='Nexus.Test' Publisher='CN=Test &amp; "
+                                "Sons'/><MSAAppId>test-app</MSAAppId><TitleId>0x1234</TitleId><MSAFullTrust>true</"
+                                "MSAFullTrust><Description>Text &lt; &amp; &quot;quoted&quot;</Description></Game>",
+                                original ),
+               S_OK );
+    ASSERT_EQ( nexus::SerializeXml( original, bytes ), S_OK );
+    ASSERT_EQ( nexus::ParseXml( bytes, reloaded ), S_OK );
+    EXPECT_EQ( reloaded.name, original.name );
+    ASSERT_EQ( reloaded.children.size(), original.children.size() );
+    for ( size_t i = 0; i < original.children.size(); ++i )
+    {
+        EXPECT_EQ( reloaded.children[i].name, original.children[i].name );
+        EXPECT_EQ( reloaded.children[i].text, original.children[i].text );
+        EXPECT_EQ( reloaded.children[i].attributes, original.children[i].attributes );
+    }
+}
+TEST( NexusConfiguration, InheritedConfigurationRejectsInvalidOrDuplicateXmlNames )
+{
+    nexus::XmlNode root;
+    root.name = "<!DOCTYPE malicious>";
+    std::string bytes;
+    EXPECT_EQ( nexus::SerializeXml( root, bytes ), E_INVALIDARG );
+    EXPECT_TRUE( bytes.empty() );
+    root.name = "Game";
+    root.attributes = { { "Name", "one" }, { "Name", "two" } };
+    EXPECT_EQ( nexus::SerializeXml( root, bytes ), E_INVALIDARG );
+    EXPECT_TRUE( bytes.empty() );
+}

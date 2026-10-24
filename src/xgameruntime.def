@@ -7,3 +7,4 @@ EXPORTS
     InitializeApiImplEx2
     UninitializeApiImpl
     XErrorReport
+XodusSaveFilesMonitor

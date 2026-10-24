@@ -13,7 +13,7 @@ const prefix=path.join(root,'pfx'),exe=path.join(build,'bin/test_nexus_user.exe'
 const hash=file=>crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const before=hash(exe);
 const env={...process.env,WINEPREFIX:prefix,WINEDEBUG:'-all',WINEARCH:'win64',WINEDLLOVERRIDES:'mscoree,mshtml,winemenubuilder.exe=d;xgameruntime=n'};
-for(const key of Object.keys(env)) if(/^(XODUS_|XUSER_|XGAMERUNTIME_|STEAM_COMPAT_|SteamAppId$|SteamGameId$|WINEDLLPATH$|GTEST_)/.test(key))delete env[key];
+for(const key of Object.keys(env)) if(/^(XODUS_|XUSER_|NEXUS_|XGAMERUNTIME_|STEAM_COMPAT_|SteamAppId$|SteamGameId$|WINEDLLPATH$|GTEST_)/.test(key))delete env[key];
 if(engine!=='wine') {const base=path.dirname(path.dirname(engine)); env.LD_LIBRARY_PATH=path.join(base,'lib64')+':'+path.join(base,'lib');}
 const result=spawnSync(engine,[exe],{env,encoding:'utf8',timeout:120000,maxBuffer:2*1024*1024});
 const output=(result.stdout||'')+(result.stderr||'');

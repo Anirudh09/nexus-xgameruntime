@@ -84,3 +84,40 @@ test('delayed callbacks use actual monotonic Windows uptime in every SDK',()=>{
     assert.match(read('scripts/test-component.mjs'),/test_nexus_timer\.exe/);
     assert.match(read('tests/Nexus/test_timer.cpp'),/EXPECT_GE\( state.fired, due \)/);
 });
+
+test('save migration preserves every original assertion and exercises actual C++ source',()=>{
+    const lock=JSON.parse(read('tests/Nexus/save-contracts.lock.json'));
+    for(const name of ['sync','transfer'])
+    {
+        const source=read('tests/Nexus/gamesave-'+name+'.cpp');
+        const checks=[...source.matchAll(/\bCHECK\(\s*"([^"\n]+)"/g)].map(m=>m[1]);
+        assert.deepEqual(checks.filter(x=>x!=='actual-config'),lock[name].originalChecks);
+        assert.equal(lock[name].requiredNativeChecks,lock[name].originalNativeChecks+1);
+        assert.ok(source.includes('#include "../../src/System/XGameSave.cpp"'));
+        assert.doesNotMatch(source,/#include "xgamesave\.c"|IXUserImplVtbl/);
+    }
+    assert.match(read('src/System/GameSave/Transactions.h'),/incoming.transport = provider->transport/);
+    assert.doesNotMatch(read('src/xgameruntime.def'),/SaveTransport|ClosedSaveTransport/);
+});
+
+test('file saves retain all ABI assertions and load their actual C++ helper DLL',()=>{
+    const lock=JSON.parse(read('tests/Nexus/save-contracts.lock.json')).files;
+    const source=read('tests/Nexus/gamesave-files.cpp');
+    const checks=[...source.matchAll(/\bCHECK\(\s*"([^"\n]+)"/g)].map(m=>m[1]);
+    assert.deepEqual(checks.filter(x=>!lock.addedChecks.includes(x)),lock.originalChecks);
+    assert.equal(lock.originalNativeChecks,21); assert.equal(lock.requiredNativeChecks,25);
+    assert.match(source,/System\/User\/XUser\.h/);
+    assert.doesNotMatch(source,/IUserVtbl|struct test_user|userprovider\.h/);
+    assert.match(read('src/System/GameSave/Files.h'),/GetModuleFileNameW\( module, modulePath/);
+    assert.match(read('scripts/test-component.mjs'),/save-child-drain/);
+    for(const file of ['scripts/test-component.mjs','scripts/test-authentication.mjs','scripts/test-saves.mjs'])
+        assert.match(read(file),/XUSER_\|NEXUS_\|XGAMERUNTIME_/);
+});
+
+test('save result APIs never inspect opaque async storage or share operation identities',()=>{
+    const source=read('src/System/XGameSave.cpp');
+    assert.doesNotMatch(source,/async->internal/);
+    assert.match(source,/saveOperationIdentities\[context->kind\]/);
+    assert.match(source,/saveOperationIdentities\[kind\]/);
+    assert.match(read('scripts/test-saves.mjs'),/Number\(match\[1\]\)>=6/);
+});

@@ -11,8 +11,9 @@ const probes = [
     ['nexus_system_device_id', 332], ['nexus_async-schedule', 16],
     ['nexus_async-completion-lifetime', 2805], ['nexus_taskqueue-teardown', 20],
     ['nexus_taskqueue-close', 1137], ['nexus_taskqueue-contract', 1374],
+    ['nexus_gamesave-sync', 283], ['nexus_gamesave-transfer', 263], ['nexus_gamesave-files', 25],
 ];
-const binaries = ['xgameruntime.dll', 'test_xgameruntime.exe', 'test_nexus_configuration.exe', 'test_nexus_timer.exe', 'nexus_runtime-init.exe', ...probes.map(([name]) => name + '.exe')];
+const binaries = ['xgameruntime.dll', 'test_xgameruntime.exe', 'test_nexus_configuration.exe', 'test_nexus_timer.exe', 'test_nexus_save.exe', 'nexus_runtime-init.exe', ...probes.map(([name]) => name + '.exe')];
 const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const snapshot = () => Object.fromEntries(binaries.map(name => [name, hash(path.join(bin, name))]));
 const before = snapshot(); // Refuse incomplete or tests-disabled builds before creating a prefix.
@@ -22,7 +23,7 @@ const prefix = path.join(root, 'pfx');
 const env = {...process.env, WINEPREFIX: prefix, WINEARCH: 'win64', WINEDEBUG: '-all',
     WINEDLLOVERRIDES: 'winemenubuilder.exe=d;mscoree,mshtml=d;xgameruntime=n'};
 for (const key of Object.keys(env)) {
-    if (/^(XODUS_|XUSER_|XGAMERUNTIME_|GTEST_|STEAM_COMPAT_|SteamAppId$|SteamGameId$|WINEDLLPATH$)/.test(key)) delete env[key];
+    if (/^(XODUS_|XUSER_|NEXUS_|XGAMERUNTIME_|GTEST_|STEAM_COMPAT_|SteamAppId$|SteamGameId$|WINEDLLPATH$)/.test(key)) delete env[key];
 }
 const proof = {schema: 1, scope: 'xgameruntime-component', completeRuntime: false,
     realGameTest: false, stableApproved: false, binaries: before, results: []};
@@ -45,9 +46,13 @@ try {
     const timerMatch = timers.match(/\[\s*PASSED\s*\]\s+(\d+) tests/);
     if (!timerMatch || Number(timerMatch[1]) < 2 || /\[\s*(SKIPPED|FAILED)\s*\]/.test(timers)) throw Error('Monotonic timer regressions failed');
     proof.results.push({name: 'timer-unit', checks: Number(timerMatch[1]), failures: 0});
+    const saves = execute('save-unit', 'wine', [path.join(bin, 'test_nexus_save.exe')]);
+    const saveMatch = saves.match(/\[\s*PASSED\s*\]\s+(\d+) tests/);
+    if (!saveMatch || Number(saveMatch[1]) < 6 || /\[\s*(SKIPPED|FAILED)\s*\]/.test(saves)) throw Error('Synthetic save regressions failed');
+    proof.results.push({name: 'save-unit', checks: Number(saveMatch[1]), failures: 0});
     const config = execute('configuration-unit', 'wine', [path.join(bin, 'test_nexus_configuration.exe')], 60000);
     const configMatch = config.match(/\[\s*PASSED\s*\]\s+(\d+) tests/);
-    if (!configMatch || Number(configMatch[1]) < 7 || /\[\s*(SKIPPED|FAILED)\s*\]/.test(config)) throw Error('Configuration regressions failed');
+    if (!configMatch || Number(configMatch[1]) < 9 || /\[\s*(SKIPPED|FAILED)\s*\]/.test(config)) throw Error('Configuration regressions failed');
     proof.results.push({name: 'configuration-unit', checks: Number(configMatch[1]), failures: 0});
     for (const mode of ['inline', 'retry', 'default']) {
         const output = execute('runtime-init-' + mode, 'wine', [path.join(bin, 'nexus_runtime-init.exe'), mode]);
@@ -61,6 +66,7 @@ try {
         if (!summary || Number(summary[1]) < minimum || Number(summary[2]) || /(?:^|\n)FAIL /.test(output))
             throw Error(name + ' lost required ABI coverage');
         proof.results.push({name, checks: Number(summary[1]), failures: 0});
+        if(name==='nexus_gamesave-files') execute('save-child-drain','wineserver',['-w']);
     }
     if (JSON.stringify(snapshot()) !== JSON.stringify(before)) throw Error('Component binaries changed during tests');
     proof.unchanged = true;

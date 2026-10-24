@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 #include "../private.h"
 #include "Xml.h"
+#include <set>
 #include <libxml/xmlreader.h>
 #include <limits>
 #include <memory>
@@ -184,5 +185,63 @@ HRESULT ReadXmlFile( const std::wstring &path, XmlNode &root ) noexcept
     }
     CloseHandle( file );
     return hr;
+}
+}
+
+namespace nexus
+{
+static HRESULT PopulateXmlNode( xmlNode *target, const XmlNode &source, unsigned depth, unsigned &count )
+{
+    if ( depth > 64 || ++count > 16384 || source.attributes.size() > 256 ) return E_INVALIDARG;
+    std::set<std::string> attributes;
+    for ( const auto &[name, value] : source.attributes )
+    {
+        if ( name.empty() || xmlValidateName( BAD_CAST name.c_str(), 0 ) || !attributes.insert( name ).second )
+            return E_INVALIDARG;
+        if ( !xmlNewProp( target, BAD_CAST name.c_str(), BAD_CAST value.c_str() ) ) return E_OUTOFMEMORY;
+    }
+    if ( !source.text.empty() )
+    {
+        auto text = xmlNewText( BAD_CAST source.text.c_str() );
+        if ( !text ) return E_OUTOFMEMORY;
+        xmlAddChild( target, text );
+    }
+    for ( const auto &child : source.children )
+    {
+        if ( child.name.empty() || xmlValidateName( BAD_CAST child.name.c_str(), 0 ) ) return E_INVALIDARG;
+        auto element = xmlNewChild( target, nullptr, BAD_CAST child.name.c_str(), nullptr );
+        if ( !element ) return E_OUTOFMEMORY;
+        auto hr = PopulateXmlNode( element, child, depth + 1, count );
+        if ( FAILED( hr ) ) return hr;
+    }
+    return S_OK;
+}
+HRESULT SerializeXml( const XmlNode &root, std::string &output ) noexcept
+{
+    output.clear();
+    if ( root.name.empty() || xmlValidateName( BAD_CAST root.name.c_str(), 0 ) ) return E_INVALIDARG;
+    try
+    {
+        std::unique_ptr<xmlDoc, decltype( &xmlFreeDoc )> document( xmlNewDoc( BAD_CAST "1.0" ), xmlFreeDoc );
+        if ( !document ) return E_OUTOFMEMORY;
+        auto element = xmlNewNode( nullptr, BAD_CAST root.name.c_str() );
+        if ( !element ) return E_OUTOFMEMORY;
+        xmlDocSetRootElement( document.get(), element );
+        unsigned count = 0;
+        auto hr = PopulateXmlNode( element, root, 0, count );
+        if ( FAILED( hr ) ) return hr;
+        xmlChar *bytes = nullptr;
+        int size = 0;
+        xmlDocDumpMemoryEnc( document.get(), &bytes, &size, "UTF-8" );
+        std::unique_ptr<xmlChar, decltype( xmlFree )> buffer( bytes, xmlFree );
+        if ( !buffer ) return E_OUTOFMEMORY;
+        if ( size <= 0 || size > 4 * 1024 * 1024 ) return E_INVALIDARG;
+        output.assign( reinterpret_cast<const char *>( bytes ), size );
+        return S_OK;
+    }
+    catch ( const std::bad_alloc & )
+    {
+        return E_OUTOFMEMORY;
+    }
 }
 }
