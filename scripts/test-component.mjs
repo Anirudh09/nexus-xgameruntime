@@ -8,6 +8,7 @@ const buildArg = process.argv[2];
 if (!buildArg || process.argv.length !== 3) throw Error('Usage: test-component.mjs BUILD_DIRECTORY');
 const build = fs.realpathSync(buildArg), bin = path.join(build, 'bin');
 const probes = [
+    ['nexus_user-device-association',6309], ['nexus_user-audio',334], ['nexus_windows-account-metadata',1713],
     ['nexus_game-relaunch',64], ['nexus_async-provider-contract',116], ['nexus_system_device_id', 332], ['nexus_async-schedule', 16],
     ['nexus_async-completion-lifetime', 2805], ['nexus_taskqueue-teardown', 20],
     ['nexus_taskqueue-close', 1137], ['nexus_taskqueue-contract', 1374],
@@ -30,11 +31,11 @@ for (const key of Object.keys(env)) {
 const proof = {schema: 1, scope: 'xgameruntime-component', completeRuntime: false,
     realGameTest: false, stableApproved: false, binaries: before, results: []};
 let passed = false;
-function execute(name, command, args, timeout = 60000) {
+function execute(name, command, args, timeout = 60000, statuses = [0]) {
     const result = spawnSync(command, args, {env, encoding: 'utf8', timeout, maxBuffer: 2 * 1024 * 1024});
     const output = (result.stdout || '') + (result.stderr || '');
     fs.writeFileSync(path.join(root, name + '.log'), output, {flag: 'wx', mode: 0o600});
-    if (result.error || result.signal || result.status !== 0) throw Error(name + ' failed; see ' + root);
+    if (result.error || result.signal || !statuses.includes(result.status)) throw Error(name + ' failed; see ' + root);
     return output;
 }
 try {
@@ -81,6 +82,18 @@ try {
         if (!summary || Number(summary[1]) < minimum || Number(summary[2]) || /(?:^|\n)FAIL /.test(output))
             throw Error(name + ' lost required ABI coverage');
         proof.results.push({name, checks: Number(summary[1]), failures: 0});
+        if(name==='nexus_windows-account-metadata')
+        {
+            const leave=execute('metadata-volatile-publication','wine',[path.join(bin,name+'.exe'),'--leave-volatile']);
+            if(!/CHECKS 2 FAILURES 0/.test(leave))throw Error('Missing volatile publication proof');
+            // Wine returns 1 when no server owns the lock. A successful wait
+            // and fresh boot below still require complete server termination.
+            execute('metadata-own-server-stop','wineserver',['-k'],10000,[0,1]);
+            execute('metadata-own-server-drain','wineserver',['-w']);
+            execute('metadata-own-server-restart','wineboot',['--init']);
+            const empty=execute('metadata-volatile-after-restart','wine',[path.join(bin,name+'.exe'),'--empty-only']);
+            if(!/CHECKS 1 FAILURES 0/.test(empty))throw Error('Identity persisted across server restart');
+        }
         if(name==='nexus_gamesave-files') execute('save-child-drain','wineserver',['-w']);
     }
     if (JSON.stringify(snapshot()) !== JSON.stringify(before)) throw Error('Component binaries changed during tests');

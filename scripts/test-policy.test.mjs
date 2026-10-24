@@ -207,3 +207,16 @@ test('the C++ runtime preserves the explicit cloud shutdown drain outside DllMai
     const loader=read('src/main.cpp').split('HRESULT WINAPI InitializeApiImplEx2')[0];
     assert.doesNotMatch(loader,/DrainCloudShutdown\(|WaitFor|RegisterCloudShutdown\(/);
 });
+
+test('all original user fixture assertions remain in actual C++ source tests',()=>{
+    const lock=JSON.parse(read('tests/Nexus/user-contracts.lock.json'));
+    for(const [key,file]of [['device','user-device-association'],['audio','user-audio'],['metadata','windows-account-metadata']])
+    {
+        const entry=lock[key],source=read('tests/Nexus/'+file+'.cpp');
+        const checks=[...source.matchAll(/\bCHECK\(\s*"([^"\n]+)"/g)].map(x=>x[1]).filter(x=>!(entry.addedChecks||[]).includes(x));
+        assert.deepEqual(checks.sort(),[...entry.originalChecks].sort());
+        assert.doesNotMatch(source,/IUserVtbl|IMMDeviceVtbl|IMMDeviceEnumeratorVtbl/);
+    }
+    assert.match(read('tests/Nexus/user-audio.cpp'),/public IMMDeviceEnumerator/);
+    assert.match(read('tests/Nexus/windows-account-metadata.cpp'),/System\/User\/Tickets.h/);
+});
