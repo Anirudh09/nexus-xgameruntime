@@ -1,0 +1,158 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Package-family derivation preserves the original Wine/Olivia Ryan algorithm.
+#include "../private.h"
+#include "Configuration.h"
+#include <bcrypt.h>
+#include <charconv>
+#include <atomic>
+#include <memory>
+#include <mutex>
+#include <algorithm>
+#include <cstring>
+
+namespace nexus {
+static std::mutex initialization_mutex;
+static std::unique_ptr<Configuration> owner;
+static std::atomic<const Configuration*> published{nullptr};
+const Configuration* configuration() noexcept { return published.load(std::memory_order_acquire); }
+
+static bool valid_store_id(std::string_view value) {
+    if (value.size() != 12) return false;
+    return std::all_of(value.begin(), value.end(), [](char c) { return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z'); });
+}
+
+HRESULT package_family_name(std::string_view name, std::string_view publisher, std::string& result) noexcept {
+    if (name.empty() || publisher.empty()) return E_INVALIDARG;
+    // This name is also a single on-disk directory, never an arbitrary path.
+    if (name.find_first_of("/\\:<>\"|?*") != std::string_view::npos || name == "." || name == "..") return E_INVALIDARG;
+    try {
+        std::wstring wide;
+        HRESULT hr = to_utf16(publisher, wide);
+        if (FAILED(hr)) return hr;
+        BYTE digest[32]; BCRYPT_ALG_HANDLE algorithm = nullptr;
+        NTSTATUS status = BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0);
+        if (status < 0) return E_FAIL;
+        status = BCryptHash(algorithm, nullptr, 0, reinterpret_cast<BYTE*>(wide.data()), static_cast<ULONG>(wide.size() * sizeof(WCHAR)), digest, sizeof(digest));
+        BCryptCloseAlgorithmProvider(algorithm, 0);
+        if (status < 0) return E_FAIL;
+        constexpr char alphabet[] = "0123456789abcdefghjkmnpqrstvwxyz";
+        UINT64 bits = 0;
+        for (unsigned i = 0; i < 8; ++i) bits = (bits << 8) | digest[i];
+        result.assign(name); result += '_';
+        for (unsigned i = 0; i < 13; ++i) {
+            int shift = 64 - 5 * static_cast<int>(i + 1);
+            UINT32 value = shift >= 0 ? (bits >> shift) & 31 : (bits << -shift) & 31;
+            result += alphabet[value];
+        }
+        return S_OK;
+    } catch (const std::bad_alloc&) { return E_OUTOFMEMORY; }
+}
+
+static HRESULT load_default(Configuration& config) {
+    std::wstring executable(32768, L'\0');
+    DWORD count = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
+    if (!count) return HRESULT_FROM_WIN32(GetLastError());
+    if (count >= executable.size()) return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+    executable.resize(count);
+    for (;;) {
+        auto slash = executable.find_last_of(L"\\/");
+        if (slash == std::wstring::npos) return E_GAME_MISSING_GAME_CONFIG;
+        executable.resize(slash);
+        std::wstring file = executable + L"\\MicrosoftGame.config";
+        DWORD attributes = GetFileAttributesW(file.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES) {
+            if (attributes & FILE_ATTRIBUTE_DIRECTORY) return E_GAMERUNTIME_GAMECONFIG_BAD_FORMAT;
+            config.directory = executable;
+            return read_xml_file(file, config.game);
+        }
+    }
+}
+
+static HRESULT load(Configuration& config, const INITIALIZE_OPTIONS* options) {
+    HRESULT hr;
+    if (options && (options->gameConfig || options->isInlineConfig)) {
+        if (!options->gameConfig) return E_GAMERUNTIME_GAMECONFIG_BAD_FORMAT;
+        if (options->isInlineConfig) {
+            size_t length = strnlen(options->gameConfig, 4 * 1024 * 1024 + 1);
+            hr = parse_xml(std::string_view(options->gameConfig, length), config.game);
+        }
+        else {
+            std::wstring file;
+            hr = to_utf16(options->gameConfig, file);
+            if (FAILED(hr)) return hr;
+            hr = read_xml_file(file, config.game);
+            // Retain the containing configuration path for package metadata.
+            std::wstring absolute(32768, L'\0');
+            DWORD length = GetFullPathNameW(file.c_str(), static_cast<DWORD>(absolute.size()), absolute.data(), nullptr);
+            if (length && length < absolute.size()) { absolute.resize(length); config.directory = absolute.substr(0, absolute.find_last_of(L"\\/")); }
+        }
+    } else hr = load_default(config);
+    if (FAILED(hr)) return hr == E_OUTOFMEMORY || hr == E_GAME_MISSING_GAME_CONFIG ? hr : E_GAMERUNTIME_GAMECONFIG_BAD_FORMAT;
+    if (config.game.name != "Game") return E_GAMERUNTIME_GAMECONFIG_BAD_FORMAT;
+    for (const auto& node : config.game.children) {
+        if (node.name == "Identity") {
+            auto name = node.attribute("Name"), publisher = node.attribute("Publisher");
+            if (!name.empty() && !publisher.empty()) {
+                hr = package_family_name(name, publisher, config.package_family);
+                if (FAILED(hr)) return hr == E_OUTOFMEMORY ? hr : E_GAMERUNTIME_GAMECONFIG_BAD_FORMAT;
+            }
+        } else if (node.name == "MSAAppId") config.msa_app_id = node.text;
+        else if (node.name == "StoreId") config.store_id = node.text;
+        else if (node.name == "TitleId") {
+            auto value = std::string_view(node.text);
+            const auto first = value.find_first_not_of(" \t\r\n"), last = value.find_last_not_of(" \t\r\n");
+            if (first == std::string_view::npos) return E_GAMERUNTIME_GAMECONFIG_BAD_FORMAT;
+            value = value.substr(first, last - first + 1);
+            if (value.starts_with("0x") || value.starts_with("0X")) value.remove_prefix(2);
+            auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), config.title_id, 16);
+            if (error != std::errc{} || end != value.data() + value.size()) return E_GAMERUNTIME_GAMECONFIG_BAD_FORMAT;
+        } else if (node.name == "MSAFullTrust") config.full_trust = node.text == "true" || node.text == "1";
+        else if (node.name == "RelatedProducts") {
+            for (const auto& product : node.children) {
+                if (product.name != "RelatedProduct") continue;
+                if (!valid_store_id(product.text)) return E_GAMERUNTIME_GAMECONFIG_BAD_FORMAT;
+                if (std::find(config.related_products.begin(), config.related_products.end(), product.text) == config.related_products.end()) {
+                    if (config.related_products.size() >= 256) return E_GAMERUNTIME_GAMECONFIG_BAD_FORMAT;
+                    config.related_products.push_back(product.text);
+                }
+            }
+        }
+    }
+    // Launcher discovery hints cannot grant rights. Malformed hints are ignored
+    // atomically, without discarding the manifest list or creating entitlements.
+    char hint[256 * 13];
+    DWORD count = GetEnvironmentVariableA("NEXUS_RELATED_PRODUCT_IDS", hint, sizeof(hint));
+    if (count && count < sizeof(hint)) {
+        auto merged = config.related_products;
+        std::string_view remaining(hint, count);
+        bool valid = true;
+        while (!remaining.empty()) {
+            auto comma = remaining.find(',');
+            auto id = remaining.substr(0, comma);
+            if (!valid_store_id(id)) { valid = false; break; }
+            if (std::find(merged.begin(), merged.end(), id) == merged.end()) {
+                if (merged.size() >= 256) { valid = false; break; }
+                merged.emplace_back(id);
+            }
+            if (comma == std::string_view::npos) break;
+            remaining.remove_prefix(comma + 1);
+            if (remaining.empty()) { valid = false; break; }
+        }
+        if (valid) config.related_products = std::move(merged);
+    }
+    return S_OK;
+}
+
+HRESULT initialize_configuration(const INITIALIZE_OPTIONS* options) noexcept {
+    try {
+        std::lock_guard lock(initialization_mutex);
+        if (configuration()) return S_OK;
+        auto candidate = std::make_unique<Configuration>();
+        HRESULT hr = load(*candidate, options);
+        if (FAILED(hr)) return hr;
+        owner = std::move(candidate);
+        published.store(owner.get(), std::memory_order_release);
+        return S_OK;
+    } catch (const std::bad_alloc&) { return E_OUTOFMEMORY; }
+}
+}

@@ -8,6 +8,7 @@ project(xgameruntime
         VERSION ${GDKC_VERSION}.${GAMING_SERVICES_VERSION} )
 
 include( ExternalProject )
+include(cmake/Xml2.cmake)
 
 find_program(WIDL
         NAMES

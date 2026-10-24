@@ -1,3 +1,5 @@
+configure_file(Nexus/MicrosoftGame.config "${CMAKE_BINARY_DIR}/bin/MicrosoftGame.config" COPYONLY)
+
 add_executable(test_xgameruntime
         Nexus/test_system.cpp
         Nexus/test_thread_local.cpp
@@ -25,6 +27,12 @@ target_include_directories(test_xgameruntime
         PRIVATE
         ${PROJECT_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/external/googletest/googletest/include )
+
+add_executable(test_nexus_configuration Nexus/test_configuration.cpp)
+target_link_libraries(test_nexus_configuration PRIVATE xgameruntime-impl GTest::gtest_main)
+target_compile_features(test_nexus_configuration PRIVATE cxx_std_23)
+target_link_options(test_nexus_configuration PRIVATE -static -static-libgcc -static-libstdc++)
+set_target_properties(test_nexus_configuration PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # For discovery purposes.
 set_target_properties(test_xgameruntime PROPERTIES
@@ -59,7 +67,7 @@ add_test(NAME NexusSystem.RawDeviceIdContract COMMAND nexus_system_device_id)
 
 option(NEXUS_MIGRATION_PROBES "Build the original Nexus ABI migration regressions" ON)
 if(NEXUS_MIGRATION_PROBES)
-    foreach(probe async-schedule async-completion-lifetime taskqueue-teardown taskqueue-contract taskqueue-close)
+    foreach(probe runtime-init async-schedule async-completion-lifetime taskqueue-teardown taskqueue-contract taskqueue-close)
         add_executable(nexus_${probe} Nexus/${probe}-probe.c)
         add_dependencies(nexus_${probe} xgameruntime-idl)
         target_compile_definitions(nexus_${probe} PRIVATE __WINESRC__)

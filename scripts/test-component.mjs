@@ -12,7 +12,7 @@ const probes = [
     ['nexus_async-completion-lifetime', 2805], ['nexus_taskqueue-teardown', 20],
     ['nexus_taskqueue-close', 1137], ['nexus_taskqueue-contract', 1374],
 ];
-const binaries = ['xgameruntime.dll', 'test_xgameruntime.exe', ...probes.map(([name]) => name + '.exe')];
+const binaries = ['xgameruntime.dll', 'test_xgameruntime.exe', 'test_nexus_configuration.exe', 'nexus_runtime-init.exe', ...probes.map(([name]) => name + '.exe')];
 const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const snapshot = () => Object.fromEntries(binaries.map(name => [name, hash(path.join(bin, name))]));
 const before = snapshot(); // Refuse incomplete or tests-disabled builds before creating a prefix.
@@ -41,6 +41,16 @@ try {
     if (!match || Number(match[1]) < 46 || /\[\s*(SKIPPED|FAILED)\s*\]/.test(units))
         throw Error('Missing, skipped or failed C++ unit coverage');
     proof.results.push({name: 'cpp-unit', checks: Number(match[1]), failures: 0});
+    const config = execute('configuration-unit', 'wine', [path.join(bin, 'test_nexus_configuration.exe')], 60000);
+    const configMatch = config.match(/\[\s*PASSED\s*\]\s+(\d+) tests/);
+    if (!configMatch || Number(configMatch[1]) < 7 || /\[\s*(SKIPPED|FAILED)\s*\]/.test(config)) throw Error('Configuration regressions failed');
+    proof.results.push({name: 'configuration-unit', checks: Number(configMatch[1]), failures: 0});
+    for (const mode of ['inline', 'retry', 'default']) {
+        const output = execute('runtime-init-' + mode, 'wine', [path.join(bin, 'nexus_runtime-init.exe'), mode]);
+        const summary = output.match(/CHECKS (\d+) FAILURES (\d+)/);
+        if (!summary || Number(summary[1]) < 6 || Number(summary[2])) throw Error('Runtime initialization ABI failed: ' + mode);
+        proof.results.push({name: 'runtime-init-' + mode, checks: Number(summary[1]), failures: 0});
+    }
     for (const [name, minimum] of probes) {
         const output = execute(name, 'wine', [path.join(bin, name + '.exe')]);
         const summary = output.match(/(?:^|\n)(?:ASYNC |QUEUE )?CHECKS (\d+) FAILURES (\d+)/);

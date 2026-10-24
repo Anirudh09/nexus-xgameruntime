@@ -6,11 +6,14 @@ This implementation is under development. Threading and desktop system interface
 
 ## Building
 
-Linux cross-compilation requires CMake 3.20 or later, Make, MinGW-w64 with C++23 support, and Wine's WIDL. Tests also require Node.js 22, Wine with both Windows architectures enabled, and the pinned GoogleTest submodule.
+Linux cross-compilation requires CMake 3.20 or later, Make, MinGW-w64 with C++23 support, and Wine's WIDL. Tests also require Node.js 22, Wine with both Windows architectures enabled, the pinned GoogleTest submodule, and the Wine source tree selected by `cmake/xml2.lock.json`. Its bundled libxml2 is compiled from source, with every input checked against that lock.
 
 ```sh
 git submodule update --init --recursive
-cmake -S . -B build/x64 -DCMAKE_TOOLCHAIN_FILE=win64-target.cmake -DENABLE_TESTS=ON -DNEXUS_MIGRATION_PROBES=ON
+# Use a separate Wine source checkout at the commit in cmake/xml2.lock.json.
+# Use a separate Wine source checkout at the commit in cmake/xml2.lock.json.
+# Use a separate Wine source checkout at the commit in cmake/xml2.lock.json.
+cmake -S . -B build/x64 -DCMAKE_TOOLCHAIN_FILE=win64-target.cmake -DENABLE_TESTS=ON -DNEXUS_MIGRATION_PROBES=ON -DNEXUS_WINE_SOURCE=/path/to/wine -DNEXUS_WINE_SOURCE=/path/to/wine -DNEXUS_WINE_SOURCE=/path/to/wine
 cmake --build build/x64 --parallel
 node scripts/test-component.mjs build/x64
 ```

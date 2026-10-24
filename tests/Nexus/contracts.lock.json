@@ -57,5 +57,8 @@
     "VerifyQueueMonitorHasCorrectPorts",
     "VerifyNestedQueueDispatchOrder",
     "VerifyCompositeTerminationRaceRepro"
-  ]
+  ],
+  "configurationProbes": {
+    "runtime-init-probe.c": "1217468c11e202b20daefead287d56f3c9b5edf7ab2edc51748666157386128f"
+  }
 }

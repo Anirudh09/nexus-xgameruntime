@@ -48,3 +48,20 @@ test('mirror configuration retains security origin, suites and signing keys',()=
     assert.ok(value.includes('Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg'));
     assert.ok(value.includes('https://example.org/apt'));
 });
+
+test('configuration retains the original initialization ABI fixture',()=>{
+    for(const [name,expected] of Object.entries(contract.configurationProbes))
+        assert.equal(crypto.createHash('sha256').update(read('tests/Nexus/'+name)).digest('hex'),expected,name);
+    for(const mode of ['inline','retry','default']) assert.ok(read('scripts/test-component.mjs').includes("'"+mode+"'"));
+});
+test('XML parser inputs are pinned and checked without fallback or external entity loading',()=>{
+    const lock=JSON.parse(read('cmake/xml2.lock.json'));
+    assert.equal(lock.commit,'7fc704ef49c50e9702c9983a5250d5738697bb04');
+    assert.ok(Object.keys(lock.files).length>70);
+    assert.match(read('cmake/Xml2.cmake'),/file\(SHA256/);
+    assert.match(read('cmake/Xml2.cmake'),/FATAL_ERROR "Pinned XML source mismatch/);
+    assert.match(read('src/Runtime/Xml.cpp'),/XML_PARSE_NONET/);
+    assert.match(read('src/Runtime/Xml.cpp'),/XML_PARSER_LOADDTD, 0/);
+    assert.match(read('src/Runtime/Xml.cpp'),/XML_PARSER_SUBST_ENTITIES, 0/);
+    assert.doesNotMatch(read('src/Runtime/Xml.cpp'),/XML_PARSE_NOENT|XML_PARSE_DTDLOAD/);
+});

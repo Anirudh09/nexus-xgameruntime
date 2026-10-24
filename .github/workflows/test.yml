@@ -18,6 +18,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          repository: ValveSoftware/wine
+          ref: 7fc704ef49c50e9702c9983a5250d5738697bb04
+          path: external/wine-source
+          sparse-checkout: libs/xml2
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -37,7 +43,7 @@ jobs:
         run: node --test scripts/test-policy.test.mjs
       - name: Compile C++ component and synthetic tests only
         run: |
-          cmake -S . -B build/component -DCMAKE_TOOLCHAIN_FILE=${{ matrix.arch }}-target.cmake -DENABLE_TESTS=ON -DNEXUS_MIGRATION_PROBES=ON
+          cmake -S . -B build/component -DCMAKE_TOOLCHAIN_FILE=${{ matrix.arch }}-target.cmake -DENABLE_TESTS=ON -DNEXUS_MIGRATION_PROBES=ON -DNEXUS_WINE_SOURCE=$GITHUB_WORKSPACE/external/wine-source
           cmake --build build/component --parallel 4
       - name: Run account-free component contracts
         run: xvfb-run -a node scripts/test-component.mjs build/component

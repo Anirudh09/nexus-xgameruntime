@@ -21,6 +21,9 @@
 #include <initguid.h>
 #include "private.h"
 #include "System/XSystem.h"
+#include "System/PersistentStorage.h"
+#include "Runtime/Configuration.h"
+#include <xpersistentlocalstorage.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -58,7 +61,7 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, void *reserved )
 HRESULT WINAPI InitializeApiImplEx2( ULONG gdkVer, ULONG gsVer, char mode, const INITIALIZE_OPTIONS *options )
 {
     TRACE( "gdkVer %ld, gsVer %ld, mode %d, options %p.\n", gdkVer, gsVer, mode, options );
-    return S_OK;
+    return nexus::initialize_configuration(options);
 }
 
 HRESULT WINAPI InitializeApiImplEx( ULONG gdkVer, ULONG gsVer, char mode )
@@ -106,6 +109,8 @@ HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
         return x_threading_impl->QueryInterface( iid, out );
     }
 
+    if (IsEqualGUID(clsid, CLSID_XPersistentLocalStorageImpl))
+        return nexus::persistent_storage_interface()->QueryInterface(iid, out);
     if (IsEqualGUID(clsid, CLSID_XSystemImpl))
         return nexus::system_interface()->QueryInterface(iid, out);
     if (IsEqualGUID(clsid, CLSID_XSystemAnalyticsImpl))
