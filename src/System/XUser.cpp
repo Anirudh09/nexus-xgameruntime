@@ -1090,6 +1090,7 @@ struct XUserAddContext
             }
         }
         ReleaseSRWLockExclusive( &lock );
+        auth_metadata( "init-complete", user, result, 0, FALSE, FALSE );
         // Completion may free/reuse the title's block. The losing worker must
         // never access it after cancellation wins the terminal-state race.
         threading->XAsyncComplete( async, result, SUCCEEDED( result ) ? sizeof( XUserHandle ) : 0 );
@@ -1154,14 +1155,20 @@ static DWORD WINAPI UserNetworkInitThread( void *arg )
     delete init;
     isSignInWorker = true;
     const auto com = CoInitializeEx( nullptr, COINIT_MULTITHREADED );
-    HRESULT hr = E_ABORT;
-    for ( unsigned attempt = 0; attempt < 5 && !user->cancelled; ++attempt )
+    HRESULT hr = FAILED( com ) ? com : E_ABORT;
+    auth_metadata( "init-worker-begin", user, E_PENDING, 0, FALSE, FALSE );
+    for ( unsigned attempt = 0; attempt < 5 && !user->cancelled && SUCCEEDED( com ); ++attempt )
     {
+        auth_metadata( "init-attempt-begin", user, E_PENDING, 0, FALSE, FALSE );
         hr = user->InitializeNetwork( context->options );
+        auth_metadata( "init-attempt-end", user, hr, 0, FALSE, FALSE );
         if ( SUCCEEDED( hr ) || user->cancelled ) break;
         if ( attempt < 4 )
+        {
+            auth_metadata( "init-retry", user, hr, 0, FALSE, FALSE );
             for ( unsigned delay = 0; delay < 30 && !user->cancelled; ++delay )
-                Sleep( 100 );
+                user->transport.WaitForSignInRetry( 100 );
+        }
     }
     if ( user->cancelled ) hr = E_ABORT;
     if ( SUCCEEDED( com ) ) CoUninitialize();

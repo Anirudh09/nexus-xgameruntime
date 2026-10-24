@@ -8,6 +8,10 @@ class UserTransport
 {
 public:
     virtual ~UserTransport() = default;
+    virtual void WaitForSignInRetry( DWORD milliseconds ) noexcept
+    {
+        Sleep( milliseconds );
+    }
     virtual HRESULT Backend( UINT16 type, const char *body, UINT16 size, char **response, UINT16 *responseSize ) = 0;
     virtual HRESULT Http( const WCHAR *method, const WCHAR *url, char *body, const WCHAR *headers, const WCHAR **accept,
                           BYTE **response, SIZE_T *responseSize ) = 0;

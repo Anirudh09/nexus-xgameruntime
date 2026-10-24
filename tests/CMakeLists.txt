@@ -187,3 +187,9 @@ target_link_libraries(test_nexus_async_identity PRIVATE xgameruntime-impl GTest:
 target_compile_features(test_nexus_async_identity PRIVATE cxx_std_23)
 target_link_options(test_nexus_async_identity PRIVATE -static -static-libgcc -static-libstdc++)
 set_target_properties(test_nexus_async_identity PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+add_executable(nexus_auth-metadata Nexus/auth-metadata.cpp)
+target_link_libraries(nexus_auth-metadata PRIVATE xgameruntime-impl nexus-xml2)
+target_compile_features(nexus_auth-metadata PRIVATE cxx_std_23)
+target_link_options(nexus_auth-metadata PRIVATE -static -static-libgcc -static-libstdc++)
+set_target_properties(nexus_auth-metadata PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")

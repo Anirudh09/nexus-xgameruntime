@@ -41,6 +41,12 @@ class SyntheticTransport final : public UserTransport
 {
 public:
     unsigned backendCalls = 0, httpCalls = 0, rawCalls = 0, unexpected = 0;
+    unsigned defaultFailures = 0, retryMilliseconds = 0, retryCalls = 0;
+    void WaitForSignInRetry( DWORD milliseconds ) noexcept override
+    {
+        retryMilliseconds += milliseconds;
+        ++retryCalls;
+    }
     bool currentFails = false, titleToken = true;
     bool blockBackend = false;
     bool blockAuthorization = false, refuseAuthorization = false;
@@ -102,6 +108,11 @@ public:
         *length = 0;
         if ( !wcscmp( url, L"https://title.mgt.xboxlive.com/titles/default/endpoints?type=1" ) )
         {
+            if ( defaultFailures )
+            {
+                --defaultFailures;
+                return E_ACCESSDENIED;
+            }
             return Reply( Endpoints(), output, length );
         }
         if ( !wcscmp( url, L"https://device.auth.xboxlive.com/device/authenticate" ) && !wcscmp( method, L"POST" ) )
@@ -877,4 +888,68 @@ TEST( NexusAuthentication, TokenAndPictureWorkersPreserveManualDispatchAndCancel
         threads->Release();
         EXPECT_EQ( transport.unexpected, 0u );
     }
+}
+
+TEST( NexusAuthentication, SignInRetryKeepsFiveAttemptBoundAndNumericDiagnostics )
+{
+    for ( bool diagnostics : { false, true } )
+        for ( unsigned failures : { 2u, 10u } )
+        {
+            SyntheticTransport transport;
+            transport.defaultFailures = failures;
+            XUserImpl api( transport );
+            IXThreadingImpl *threads = nullptr;
+            ASSERT_EQ( QueryApiImpl( CLSID_XThreadingImpl, __uuidof( IXThreadingImpl ),
+                                     reinterpret_cast<void **>( &threads ) ),
+                       S_OK );
+            XTaskQueueHandle queue = nullptr;
+            ASSERT_EQ(
+                threads->XTaskQueueCreate( XTaskQueueDispatchMode::Manual, XTaskQueueDispatchMode::Manual, &queue ),
+                S_OK );
+            char directory[MAX_PATH], log[MAX_PATH];
+            ASSERT_TRUE( GetTempPathA( sizeof( directory ), directory ) );
+            ASSERT_TRUE( GetTempFileNameA( directory, "nau", 0, log ) );
+            ASSERT_TRUE( SetEnvironmentVariableA( "XUSER_AUTH_METADATA_LOG", diagnostics ? log : nullptr ) );
+            XAsyncBlock block{};
+            block.queue = queue;
+            ASSERT_EQ( api.XUserAddAsync( XUserAddOptions::AddDefaultUserSilently, &block ), S_OK );
+            ASSERT_TRUE( threads->XTaskQueueDispatch( queue, XTaskQueuePort::Work, 0 ) );
+            const auto expected = failures == 2 ? S_OK : E_ACCESSDENIED;
+            EXPECT_EQ( threads->XAsyncGetStatus( &block, TRUE ), expected );
+            XUser *user = nullptr;
+            EXPECT_EQ( api.XUserAddResult( &block, &user ), expected );
+            if ( user )
+            {
+                EXPECT_EQ( user->xuid, 1234567890123456ull );
+                user->Release();
+            }
+            EXPECT_EQ( WaitForUserSignInWorkers( 5000 ), S_OK );
+            EXPECT_EQ( transport.retryMilliseconds, failures == 2 ? 6000u : 12000u );
+            EXPECT_EQ( transport.retryCalls, failures == 2 ? 60u : 120u );
+            EXPECT_EQ( transport.backendCalls, failures == 2 ? 1u : 0u );
+            EXPECT_EQ( transport.unexpected, 0u );
+            auto file = CreateFileA( log, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                                     FILE_ATTRIBUTE_NORMAL, nullptr );
+            ASSERT_NE( file, INVALID_HANDLE_VALUE );
+            char bytes[32769]{};
+            DWORD count = 0;
+            EXPECT_TRUE( ReadFile( file, bytes, sizeof( bytes ) - 1, &count, nullptr ) );
+            CloseHandle( file );
+            if ( diagnostics )
+            {
+                EXPECT_NE( strstr( bytes, "phase=init-worker-begin" ), nullptr );
+                EXPECT_NE( strstr( bytes, "phase=init-attempt-end" ), nullptr );
+                EXPECT_NE( strstr( bytes, "phase=init-retry" ), nullptr );
+                EXPECT_NE( strstr( bytes, "phase=init-complete" ), nullptr );
+                EXPECT_EQ( strstr( bytes, "synthetic" ), nullptr );
+                EXPECT_EQ( strstr( bytes, "https:" ), nullptr );
+                EXPECT_LE( count, 32768u );
+            }
+            else
+                EXPECT_EQ( count, 0u );
+            SetEnvironmentVariableA( "XUSER_AUTH_METADATA_LOG", nullptr );
+            DeleteFileA( log );
+            threads->XTaskQueueCloseHandle( queue );
+            threads->Release();
+        }
 }

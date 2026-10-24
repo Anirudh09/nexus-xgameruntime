@@ -21,7 +21,7 @@ fs.writeFileSync(path.join(root,'tests.log'),output,{flag:'wx',mode:0o600});
 const server=engine==='wine'?'wineserver':path.join(path.dirname(engine),'wineserver');
 const stop=spawnSync(server,['-k'],{env,timeout:10000,stdio:'ignore'}),drain=spawnSync(server,['-w'],{env,timeout:10000,stdio:'ignore'});
 const match=output.match(/\[\s*PASSED\s*\]\s+(\d+) tests/);
-const proof={scope:'C++ authentication implementation, synthetic transport only',engine,engineHash:engine==='wine'?null:hash(engine),exeHash:before,unchanged:hash(exe)===before,status:result.status,signal:result.signal,error:result.error?.message,checks:match?Number(match[1]):0,realAccounts:false,realCloud:false,fullRuntime:false,passed:result.status===0&&!result.error&&!!match&&Number(match[1])>=22&&!/\[\s*(FAILED|SKIPPED)\s*\]/.test(output)};
+const proof={scope:'C++ authentication implementation, synthetic transport only',engine,engineHash:engine==='wine'?null:hash(engine),exeHash:before,unchanged:hash(exe)===before,status:result.status,signal:result.signal,error:result.error?.message,checks:match?Number(match[1]):0,realAccounts:false,realCloud:false,fullRuntime:false,passed:result.status===0&&!result.error&&!!match&&Number(match[1])>=23&&!/\[\s*(FAILED|SKIPPED)\s*\]/.test(output)};
 if(stop.error||drain.error||drain.status!==0) {proof.passed=false;proof.cleanupFailed=true;}
 if(proof.passed&&fs.existsSync(prefix)) {
     if(fs.realpathSync(prefix)!==prefix||!fs.lstatSync(prefix).isDirectory())throw Error('Unexpected synthetic prefix');

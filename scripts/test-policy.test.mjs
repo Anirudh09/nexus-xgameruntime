@@ -73,7 +73,7 @@ test('authentication compiles pinned WinRT declarations and never exports transp
     assert.match(read('cmake/Winrt.cmake'),/file\(SHA256/);
     assert.match(read('cmake/Winrt.cmake'),/FATAL_ERROR "Pinned WinRT source mismatch/);
     assert.doesNotMatch(read('src/xgameruntime.def')+read('src/xgameruntime-x86.def'),/Transport|Synthetic|TestHook/);
-    assert.match(read('scripts/test-authentication.mjs'),/Number\(match\[1\]\)>=22/);
+    assert.match(read('scripts/test-authentication.mjs'),/Number\(match\[1\]\)>=23/);
     assert.match(read('scripts/test-authentication.mjs'),/realAccounts:false,realCloud:false,fullRuntime:false/);
     assert.match(read('tests/Nexus/test_user.cpp'),/There is deliberately no network fallback/);
 });
@@ -235,4 +235,22 @@ test('privilege result APIs never decode opaque async bytes or export an identit
     assert.doesNotMatch(read('src/xgameruntime.def')+read('src/xgameruntime-x86.def'),/GetAsyncStatusForIdentity/);
     assert.match(read('src/System/Threading/XAsync.cpp'),/completedIdentity==state->identity/);
     assert.match(read('tests/Nexus/test_async_identity.cpp'),/ConcurrentCompletionNeverInterpretsTerminalIdentityAsLiveState/);
+});
+
+test('numeric auth privacy assertions remain and bounded retry uses the actual C++ worker',()=>{
+    const entry=JSON.parse(read('tests/Nexus/user-contracts.lock.json')).authLogger;
+    const source=read('tests/Nexus/auth-metadata.cpp');
+    assert.deepEqual([...source.matchAll(/\bCHECK\(\s*"([^"\n]+)"/g)].map(x=>x[1]),entry.originalPrivacyChecks);
+    assert.match(source,/System\/XUser.cpp/);
+    assert.match(read('src/System/XUser.cpp'),/attempt < 5/);
+    assert.match(read('src/System/User/Transport.h'),/WaitForSignInRetry/);
+    assert.match(read('tests/Nexus/test_user.cpp'),/SignInRetryKeepsFiveAttemptBoundAndNumericDiagnostics/);
+});
+
+test('WinRT-dependent privilege validation has a separate matching-engine gate',()=>{
+    assert.match(read('scripts/test-user-contracts.mjs'),/PINNED_WINE_EXECUTABLE/);
+    assert.match(read('scripts/test-user-contracts.mjs'),/user-privilege',1162/);
+    assert.match(read('scripts/test-user-contracts.mjs'),/auth-metadata',200/);
+    assert.doesNotMatch(read('scripts/test-component.mjs'),/\['nexus_user-privilege',/);
+    assert.match(read('src/System/Threading/XAsync.cpp'),/std::atomic<DWORD> signature/);
 });
