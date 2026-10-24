@@ -374,6 +374,8 @@ HRESULT WINAPI XStoreImpl::XStoreQueryLicenseTokenAsync( const XStoreContextHand
     if ( !storeContextHandle || !async || !productIds || !productIdsCount || productIdsCount > 64 ||
          !customDeveloperString || !*customDeveloperString )
         return E_INVALIDARG;
+    UINT64 xuid;
+    if ( FAILED( hr = entitled_store_user( storeContextHandle, &xuid ) ) ) return hr;
     for ( i = 0; i < productIdsCount; i++ )
         if ( !productIds[i] || !*productIds[i] ) return E_INVALIDARG;
     if ( !( context = static_cast<std::remove_reference_t<decltype( context )>>( calloc( 1, sizeof( *context ) ) ) ) )

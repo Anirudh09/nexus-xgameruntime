@@ -347,6 +347,7 @@
       "store-free-block-release",
       "store-free-block-worker-drained",
       "store-free-block-no-second-callback",
+      "runtime-token-rejects-foreign-store-context",
       "runtime-current-game-invalid-context",
       "runtime-current-game-no-missing-config-grant"
     ]

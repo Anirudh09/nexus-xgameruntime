@@ -1628,6 +1628,21 @@ int main( void )
             CHECK( "runtime-game-register-close",
                    ( store_api )->XStoreRegisterGameLicenseChanged( store, NULL, NULL, game_changed, &game_token ) ==
                        S_OK );
+            // No queue can run a request in this negative handle test. The
+            // bridge-body builder is local XML only, even on the old code.
+            XTaskQueueHandle previousQueue = nullptr;
+            const auto hadQueue = threads->XTaskQueueGetCurrentProcessTaskQueue( &previousQueue );
+            threads->XTaskQueueSetCurrentProcessTaskQueue( nullptr );
+            XAsyncBlock invalidToken{};
+            const char *ids[] = { "B00000000001" };
+            CHECK( "runtime-token-rejects-foreign-store-context",
+                   store_api->XStoreQueryLicenseTokenAsync( ( void * )1, ids, 1, "synthetic-negative-context",
+                                                            &invalidToken ) == E_INVALIDARG );
+            if ( hadQueue )
+            {
+                threads->XTaskQueueSetCurrentProcessTaskQueue( previousQueue );
+                threads->XTaskQueueCloseHandle( previousQueue );
+            }
             ( threads )->Release();
         }
         XAsyncBlock invalid_license = { 0 };
