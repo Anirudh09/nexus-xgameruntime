@@ -12,10 +12,10 @@ const probes = [
     ['nexus_async-completion-lifetime', 2805], ['nexus_taskqueue-teardown', 20],
     ['nexus_taskqueue-close', 1137], ['nexus_taskqueue-contract', 1374],
     ['nexus_package-identity', 15], ['nexus_package-legacy', 139], ['nexus_package-chunks', 312],
-    ['nexus_package-monitors', 362], ['nexus_package-progress-bytes', 115],
+    ['nexus_package-content',332], ['nexus_package-monitors', 362], ['nexus_package-progress-bytes', 115],
     ['nexus_gamesave-sync', 283], ['nexus_gamesave-transfer', 263], ['nexus_gamesave-files', 25],
 ];
-const binaries = ['xgameruntime.dll', 'test_xgameruntime.exe', 'test_nexus_configuration.exe', 'test_nexus_timer.exe', 'test_nexus_save.exe', 'nexus_runtime-init.exe', ...probes.map(([name]) => name + '.exe')];
+const binaries = ['xgameruntime.dll', 'test_xgameruntime.exe', 'test_nexus_configuration.exe', 'test_nexus_timer.exe', 'test_nexus_save.exe', 'test_nexus_user.exe', 'nexus_store-entitlements.exe', 'nexus_runtime-init.exe', ...probes.map(([name]) => name + '.exe')];
 const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const snapshot = () => Object.fromEntries(binaries.map(name => [name, hash(path.join(bin, name))]));
 const before = snapshot(); // Refuse incomplete or tests-disabled builds before creating a prefix.

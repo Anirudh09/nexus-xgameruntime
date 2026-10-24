@@ -153,3 +153,28 @@ test('original raw package probes remain independent and child DLL staging is pr
     assert.match(read('scripts/test-component.mjs'),/fs.renameSync\(temporary,staged\)/);
     assert.match(read('scripts/test-component.mjs'),/hash\(staged\)!==before/);
 });
+
+test('C++ Store and content helpers retain every original account-free assertion',()=>{
+    const lock=JSON.parse(read('tests/Nexus/store-contracts.lock.json'));
+    for(const name of ['store-entitlements','package-content'])
+    {
+        const source=read('tests/Nexus/'+name+'.cpp');
+        const checks=[...source.matchAll(/\bCHECK\(\s*"([^"\n]+)"/g)].map(m=>m[1]);
+        assert.deepEqual(checks.filter(x=>!lock[name].addedChecks.includes(x)),lock[name].originalChecks);
+        assert.deepEqual(checks.filter(x=>lock[name].addedChecks.includes(x)),lock[name].addedChecks);
+        assert.doesNotMatch(source,/#include "xstore_.*\.h"|#include "xpackage_content\.h"/);
+    }
+    assert.match(read('tests/Nexus/store-entitlements.cpp'),/The license bridge below always fails/);
+    assert.doesNotMatch(read('src/xgameruntime.def'),/Fixture|receipt_verify|GetStoreProductId/);
+});
+
+test('current game licenses require proof-bound genuine SKU and support safe cancellation',()=>{
+    const source=read('src/System/Store/GameLicense.h').replace(/\s+/g,'');
+    assert.match(source,/snapshot->proof_until<=now/);
+    assert.match(source,/entitled_sku_id\(sku.skuId\)/);
+    assert.doesNotMatch(source,/4102444800|0010|isActive\s*=\s*TRUE[\s\S]*return E_NOTIMPL/);
+    assert.match(read('src/System/Store/Entitled.h').replace(/\s+/g,''),/InterlockedCompareExchange\(&context->terminal,1,0\)/);
+    assert.match(read('tests/Nexus/store-entitlements.cpp').replace(/\s+/g,''),/VirtualFree\(block,0,MEM_RELEASE\)/);
+    assert.match(read('scripts/test-store.mjs'),/\['store-entitlements',970\]/);
+    assert.match(read('scripts/test-store.mjs'),/realAccounts:false,realCloud:false,fullRuntime:false/);
+});

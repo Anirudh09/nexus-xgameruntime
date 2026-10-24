@@ -2,7 +2,7 @@
 // Independent raw COM-slot checks against a test-only C++ implementation of
 // the generated interface. This mock is never exposed by the runtime DLL.
 #include "../../src/private.h"
-#include "../test_fixtures.h"
+#include <gtest/gtest.h>
 #include <xpackage.h>
 
 namespace
