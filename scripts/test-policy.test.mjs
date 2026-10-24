@@ -121,3 +121,19 @@ test('save result APIs never inspect opaque async storage or share operation ide
     assert.match(source,/saveOperationIdentities\[kind\]/);
     assert.match(read('scripts/test-saves.mjs'),/Number\(match\[1\]\)>=6/);
 });
+
+test('versioned private COM declarations must not collapse independent C++ virtual slots',()=>{
+    const interfaces={};
+    for(const file of fs.readdirSync(path.join(root,'include')).filter(x=>x.endsWith('.idl')))
+    {
+        const source=read('include/'+file).replace(/\/\*[\s\S]*?\*\//g,'');
+        for(const m of source.matchAll(/interface\s+(\w+)\s*:\s*(\w+)\s*\{([^}]*)\}/g))
+            interfaces[m[1]]={file,parent:m[2],names:[...m[3].matchAll(/\b(?:HRESULT|BOOLEAN|UINT32|INT32|UINT64|ULONG|void)\s+(\w+)\s*\(/g)].map(x=>x[1])};
+    }
+    const inherited=name=>interfaces[name]?[...inherited(interfaces[name].parent),...interfaces[name].names]:[];
+    for(const [name,value]of Object.entries(interfaces))
+    {
+        const ancestors=new Set(inherited(value.parent));
+        for(const method of value.names)assert.ok(!ancestors.has(method),name+' redeclares '+method+' and collapses its appended slot');
+    }
+});
