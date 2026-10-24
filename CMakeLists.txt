@@ -87,6 +87,8 @@ foreach(IDL_FILE ${IDL_FILES})
             ${GENERATED_H})
 endforeach()
 
+include(cmake/Winrt.cmake)
+
 add_custom_target(xgameruntime-idl
         DEPENDS ${IDL_GENERATED_FILES} )
 

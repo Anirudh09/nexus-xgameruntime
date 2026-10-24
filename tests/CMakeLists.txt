@@ -29,6 +29,12 @@ target_include_directories(test_xgameruntime
         ${PROJECT_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/external/googletest/googletest/include )
 
+add_executable(test_nexus_user Nexus/test_user.cpp)
+target_link_libraries(test_nexus_user PRIVATE xgameruntime-impl GTest::gtest_main)
+target_compile_features(test_nexus_user PRIVATE cxx_std_23)
+target_link_options(test_nexus_user PRIVATE -static -static-libgcc -static-libstdc++)
+set_target_properties(test_nexus_user PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 add_executable(test_nexus_configuration Nexus/test_configuration.cpp)
 target_link_libraries(test_nexus_configuration PRIVATE xgameruntime-impl GTest::gtest_main)
 target_compile_features(test_nexus_configuration PRIVATE cxx_std_23)

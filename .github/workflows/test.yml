@@ -23,7 +23,9 @@ jobs:
           repository: ValveSoftware/wine
           ref: 7fc704ef49c50e9702c9983a5250d5738697bb04
           path: external/wine-source
-          sparse-checkout: libs/xml2
+          sparse-checkout: |
+            libs/xml2
+            include
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

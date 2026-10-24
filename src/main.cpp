@@ -24,6 +24,7 @@
 #include "System/PersistentStorage.h"
 #include "Runtime/Configuration.h"
 #include <xpersistentlocalstorage.h>
+#include "Runtime/StoreDiagnostics.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -109,6 +110,10 @@ HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
         return x_threading_impl->QueryInterface( iid, out );
     }
 
+    if (IsEqualGUID(clsid, CLSID_XUserImpl))
+        return x_user_impl->QueryInterface(iid, out);
+    if (IsEqualGUID(clsid, CLSID_XUserDeviceImpl))
+        return x_user_device_impl->QueryInterface(iid, out);
     if (IsEqualGUID(clsid, CLSID_XPersistentLocalStorageImpl))
         return nexus::GetPersistentStorageInterface()->QueryInterface(iid, out);
     if (IsEqualGUID(clsid, CLSID_XSystemImpl))

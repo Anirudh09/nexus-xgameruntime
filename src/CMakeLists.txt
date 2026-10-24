@@ -11,6 +11,8 @@ add_dependencies(xgameruntime-impl
 
 # System
 target_sources(xgameruntime-impl PRIVATE
+        System/XUser.cpp
+        HttpClient.cpp
         System/XThreading.cpp
         System/XSystem.cpp
         System/PersistentStorage.cpp
@@ -26,7 +28,7 @@ target_sources(xgameruntime-impl PRIVATE
         System/Threading/QueueHandles.cpp )
 
 target_link_libraries( xgameruntime-impl PRIVATE
-        xgameruntime-common nexus-xml2 shell32 bcrypt )
+        xgameruntime-common nexus-xml2 shell32 bcrypt advapi32 crypt32 runtimeobject ole32 winhttp wininet ws2_32 )
 
 target_include_directories(xgameruntime-impl
         PUBLIC

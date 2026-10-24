@@ -65,3 +65,15 @@ test('XML parser inputs are pinned and checked without fallback or external enti
     assert.match(read('src/Runtime/Xml.cpp'),/XML_PARSER_SUBST_ENTITIES, 0/);
     assert.doesNotMatch(read('src/Runtime/Xml.cpp'),/XML_PARSE_NOENT|XML_PARSE_DTDLOAD/);
 });
+
+test('authentication compiles pinned WinRT declarations and never exports transport injection',()=>{
+    const lock=JSON.parse(read('cmake/winrt.lock.json'));
+    assert.equal(lock.commit,'7fc704ef49c50e9702c9983a5250d5738697bb04');
+    assert.equal(Object.keys(lock.files).length,13);
+    assert.match(read('cmake/Winrt.cmake'),/file\(SHA256/);
+    assert.match(read('cmake/Winrt.cmake'),/FATAL_ERROR "Pinned WinRT source mismatch/);
+    assert.doesNotMatch(read('src/xgameruntime.def')+read('src/xgameruntime-x86.def'),/Transport|Synthetic|TestHook/);
+    assert.match(read('scripts/test-authentication.mjs'),/Number\(match\[1\]\)>=19/);
+    assert.match(read('scripts/test-authentication.mjs'),/realAccounts:false,realCloud:false,fullRuntime:false/);
+    assert.match(read('tests/Nexus/test_user.cpp'),/There is deliberately no network fallback/);
+});
