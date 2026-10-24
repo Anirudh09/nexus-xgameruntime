@@ -1,5 +1,6 @@
 add_executable(test_xgameruntime
         Nexus/test_system.cpp
+        Nexus/test_thread_local.cpp
         System/test_xthreading.cpp
         test_fixtures.cpp)
 
