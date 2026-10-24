@@ -601,7 +601,7 @@ private:
         void* completionPortToken;
         void* context;
         XTaskQueueTerminatedCallback* callback;
-        std::shared_ptr<TerminationData> completion;
+        TerminationData* completion = nullptr;
     };
 
     struct TerminationData

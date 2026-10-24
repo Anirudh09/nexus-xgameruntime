@@ -1411,13 +1411,12 @@ HRESULT TaskQueueImpl::Terminate(
 {
     std::unique_ptr<TerminationEntry> entry(new (std::nothrow) TerminationEntry);
     RETURN_IF_NULL_ALLOC(entry);
-    std::shared_ptr<TerminationData> completion;
+    TerminationData completion{};
     if (wait)
     {
-        try { completion = std::make_shared<TerminationData>(); }
-        catch (const std::bad_alloc&) { return E_OUTOFMEMORY; }
-        completion->terminated = false;
-        entry->completion = completion;
+        // This frame cannot leave until the callback signals this request.
+        // Its mutex also ensures callback access ends before the waiter returns.
+        entry->completion = &completion;
     }
 
     entry->owner = this;
@@ -1451,10 +1450,10 @@ HRESULT TaskQueueImpl::Terminate(
     
     if (wait)
     {
-        std::unique_lock<std::mutex> lock(completion->lock);
-        while(!completion->terminated)
+        std::unique_lock<std::mutex> lock(completion.lock);
+        while(!completion.terminated)
         {
-            completion->cv.wait(lock);
+            completion.cv.wait(lock);
         }
 
         m_work.Port->WaitForUnwind();
