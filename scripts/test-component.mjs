@@ -22,7 +22,7 @@ const prefix = path.join(root, 'pfx');
 const env = {...process.env, WINEPREFIX: prefix, WINEARCH: 'win64', WINEDEBUG: '-all',
     WINEDLLOVERRIDES: 'winemenubuilder.exe=d;mscoree,mshtml=d;xgameruntime=n'};
 for (const key of Object.keys(env)) {
-    if (/^(XODUS_|XUSER_|GTEST_|STEAM_COMPAT_|SteamAppId$|SteamGameId$)/.test(key)) delete env[key];
+    if (/^(XODUS_|XUSER_|XGAMERUNTIME_|GTEST_|STEAM_COMPAT_|SteamAppId$|SteamGameId$|WINEDLLPATH$)/.test(key)) delete env[key];
 }
 const proof = {schema: 1, scope: 'xgameruntime-component', completeRuntime: false,
     realGameTest: false, stableApproved: false, binaries: before, results: []};
