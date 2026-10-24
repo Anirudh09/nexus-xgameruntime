@@ -3,16 +3,18 @@
 #include "Xml.h"
 #include <xgameruntimeinit.h>
 
-namespace nexus {
-struct Configuration {
+namespace nexus
+{
+struct GameConfiguration
+{
     XmlNode game;
-    std::string msa_app_id, store_id, package_family;
-    UINT32 title_id = 0;
-    bool full_trust = false;
+    std::string msaAppId, storeId, packageFamilyName;
+    UINT32 titleId = 0;
+    bool fullTrust = false;
     std::wstring directory;
-    std::vector<std::string> related_products;
+    std::vector<std::string> relatedProducts;
 };
-HRESULT initialize_configuration(const INITIALIZE_OPTIONS* options) noexcept;
-const Configuration* configuration() noexcept;
-HRESULT package_family_name(std::string_view name, std::string_view publisher, std::string& result) noexcept;
+HRESULT InitializeGameConfiguration( const INITIALIZE_OPTIONS *options ) noexcept;
+const GameConfiguration *GetGameConfiguration() noexcept;
+HRESULT GetPackageFamilyName( std::string_view name, std::string_view publisher, std::string &result ) noexcept;
 }
