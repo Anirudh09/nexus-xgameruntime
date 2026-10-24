@@ -19,7 +19,8 @@ target_sources(xgameruntime-impl PRIVATE
         System/Threading/ThreadPool.cpp
         System/Threading/WaitTimer.cpp
         System/Threading/XAsync.cpp
-        System/Threading/XTaskQueue.cpp )
+        System/Threading/XTaskQueue.cpp
+        System/Threading/QueueHandles.cpp )
 
 target_link_libraries( xgameruntime-impl PRIVATE
         xgameruntime-common )
