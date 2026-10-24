@@ -20,26 +20,6 @@
 #include "WaitTimer.h"
 
 #include <memory>
-#include <chrono>
-
-using Clock = std::chrono::steady_clock;
-using Deadline = Clock::time_point;
-using TimerDuration = std::chrono::nanoseconds;
-
-namespace
-{
-    Deadline DeadlineFromDueTime(uint64_t dueTime) noexcept
-    {
-        return Deadline(std::chrono::duration_cast<Clock::duration>(TimerDuration(dueTime)));
-    }
-
-    uint64_t DueTimeFromDeadline(Deadline deadline) noexcept
-    {
-        return static_cast<uint64_t>(
-            std::chrono::duration_cast<TimerDuration>(deadline.time_since_epoch()).count());
-    }
-}
-
 namespace OS
 {
     class WaitTimerImpl
@@ -82,21 +62,15 @@ namespace OS
             LARGE_INTEGER li;
             FILETIME ft;
 
-            Deadline now = Clock::now();
-            Deadline dueDeadline = DeadlineFromDueTime(dueTime);
-            TimerDuration remaining = dueDeadline > now
-                ? std::chrono::duration_cast<TimerDuration>(dueDeadline - now)
-                : TimerDuration::zero();
-
-            constexpr int64_t nanosPerTick = 100;
-            int64_t relativeTicks =
-                (static_cast<int64_t>(remaining.count()) + nanosPerTick - 1) /
-                nanosPerTick;
-
-            if (relativeTicks <= 0)
-            {
-                relativeTicks = 1;
-            }
+            // Some MinGW standard libraries implement steady_clock with
+            // gettimeofday. Queue deadlines must not follow wall-clock jumps.
+            // The public delay is in milliseconds, matching Windows uptime.
+            const uint64_t now = GetTickCount64();
+            const uint64_t remaining = dueTime > now ? dueTime - now : 0;
+            constexpr uint64_t ticksPerMillisecond = 10000;
+            const uint64_t maxMilliseconds = INT64_MAX / ticksPerMillisecond;
+            const int64_t relativeTicks = remaining > maxMilliseconds
+                ? INT64_MAX : remaining ? static_cast<int64_t>(remaining * ticksPerMillisecond) : 1;
 
             li.QuadPart = -relativeTicks;
             ft.dwHighDateTime = li.HighPart;
@@ -176,12 +150,11 @@ namespace OS
 
     uint64_t WaitTimer::GetCurrentTime() noexcept
     {
-        return DueTimeFromDeadline(Clock::now());
+        return GetTickCount64();
     }
 
     uint64_t WaitTimer::GetDueTime(_In_ uint32_t msFromNow) noexcept
     {
-        Deadline deadline = Clock::now() + std::chrono::milliseconds(msFromNow);
-        return DueTimeFromDeadline(deadline);
+        return GetTickCount64() + msFromNow;
     }
 } // Namespace

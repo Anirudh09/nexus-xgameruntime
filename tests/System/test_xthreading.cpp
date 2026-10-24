@@ -2093,6 +2093,8 @@ TEST_F(XThreadingTests, VerifySubmitCallbackWithWait)
         uint64_t call2Ticks = result.Times[1] - baseTicks;
         uint64_t call3Ticks = result.Times[2] - baseTicks;
 
+        SCOPED_TRACE(testing::Message() << "port=" << i << " call1=" << call1Ticks << " call2=" << call2Ticks << " call3=" << call3Ticks);
+
         // Call 1 at index 0 should have a tick count > 1000 and < 1100 (100ms tolerance for debugger overhead)
         EXPECT_TRUE(call1Ticks >= 1000 && call1Ticks < 1100);
         EXPECT_TRUE(call2Ticks < 100);

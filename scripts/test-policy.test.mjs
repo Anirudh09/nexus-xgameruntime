@@ -77,3 +77,10 @@ test('authentication compiles pinned WinRT declarations and never exports transp
     assert.match(read('scripts/test-authentication.mjs'),/realAccounts:false,realCloud:false,fullRuntime:false/);
     assert.match(read('tests/Nexus/test_user.cpp'),/There is deliberately no network fallback/);
 });
+
+test('delayed callbacks use actual monotonic Windows uptime in every SDK',()=>{
+    assert.match(read('src/System/Threading/WaitTimer.cpp'),/GetTickCount64\(\)/);
+    assert.doesNotMatch(read('src/System/Threading/WaitTimer.cpp'),/std::chrono::steady_clock|gettimeofday\(/);
+    assert.match(read('scripts/test-component.mjs'),/test_nexus_timer\.exe/);
+    assert.match(read('tests/Nexus/test_timer.cpp'),/EXPECT_GE\( state.fired, due \)/);
+});
