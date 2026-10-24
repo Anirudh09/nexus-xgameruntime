@@ -62,6 +62,8 @@ struct AsyncState
     AsyncState* completionNext = nullptr;
     bool completionRegistered = false;
 
+    SIZE_T resultBufferSize = 0; // Immutable after terminal status publication.
+    std::atomic<bool> resultRetrievalStarted{false};
     const void* identity = nullptr;
     const char* identityName = nullptr;
 
@@ -706,7 +708,7 @@ HRESULT WINAPI XAsyncGetResultSize(
         state = internal.GetState();
     }
 
-    *bufferSize = state == nullptr ? 0 : state->providerData.bufferSize;
+    *bufferSize = state == nullptr ? 0 : state->resultBufferSize;
 
     return result;
 }
@@ -921,6 +923,7 @@ void WINAPI XAsyncComplete(
         if (completedNow)
         {
             state->providerData.bufferSize = requiredBufferSize;
+            state->resultBufferSize = requiredBufferSize;
             state->completionResult.store(result);
             if (state->providerAsyncBlock.callback) RegisterCompletionWait(state);
         }
@@ -948,6 +951,7 @@ HRESULT WINAPI XAsyncGetResult(
     HRESULT result = E_PENDING;
     AsyncStateRef state;
     bool resultsAlreadyReturned;
+    bool resultAccessed = false;
 
     {
         AsyncBlockInternalGuard internal{ asyncBlock };
@@ -985,10 +989,10 @@ HRESULT WINAPI XAsyncGetResult(
             }
 
             result = E_INVALIDARG;
-            assert(false);
+            // A mismatched call/result is a recoverable API argument error.
             assert(sprintfResult > 0);
         }
-        else if (state->providerData.bufferSize == 0)
+        else if (state->resultBufferSize == 0)
         {
             result = E_NOTIMPL;
         }
@@ -996,15 +1000,20 @@ HRESULT WINAPI XAsyncGetResult(
         {
             result = E_INVALIDARG;
         }
-        else if (bufferSize < state->providerData.bufferSize)
+        else if (bufferSize < state->resultBufferSize)
         {
             result = E_NOT_SUFFICIENT_BUFFER;
         }
+        else if (state->resultRetrievalStarted.exchange(true))
+        {
+            result = E_ILLEGAL_METHOD_CALL;
+        }
         else
         {
+            resultAccessed = true;
             if (bufferUsed != nullptr)
             {
-                *bufferUsed = state->providerData.bufferSize;
+                *bufferUsed = state->resultBufferSize;
             }
 
             state->providerData.bufferSize = bufferSize;
@@ -1013,7 +1022,11 @@ HRESULT WINAPI XAsyncGetResult(
         }
     }
 
-    if (result != E_PENDING && state != nullptr)
+    if (resultAccessed && result == E_PENDING) state->resultRetrievalStarted = false;
+
+    // Argument failures must retain the result for a corrected retry. Only the
+    // single provider invocation consumes state and runs its cleanup.
+    if (resultAccessed && result != E_PENDING && state != nullptr)
     {
         {
             AsyncBlockInternalGuard internal{ asyncBlock };
