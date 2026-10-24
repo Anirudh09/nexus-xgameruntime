@@ -775,6 +775,7 @@ HRESULT WINAPI XAsyncSchedule(
     XAsyncBlock* asyncBlock,
     UINT32 delayInMs
 ) {
+    RETURN_HR_IF(E_INVALIDARG, asyncBlock == nullptr);
     HRESULT existingStatus;
     AsyncStateRef state;
     {
