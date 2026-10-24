@@ -20,6 +20,7 @@
 
 #include <initguid.h>
 #include "private.h"
+#include "System/XSystem.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -72,6 +73,8 @@ HRESULT WINAPI InitializeApiImpl( ULONG gdkVer, ULONG gsVer )
 
 HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
 {
+    if (!out) return E_POINTER;
+    *out = nullptr;
     // ------------ FOR FUTURE REFERENCES ------------
     //
     // Interfaces returned are COM interfaces and inherit IUnknown*
@@ -102,6 +105,11 @@ HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
     {
         return x_threading_impl->QueryInterface( iid, out );
     }
+
+    if (IsEqualGUID(clsid, CLSID_XSystemImpl))
+        return nexus::system_interface()->QueryInterface(iid, out);
+    if (IsEqualGUID(clsid, CLSID_XSystemAnalyticsImpl))
+        return nexus::system_analytics_interface()->QueryInterface(iid, out);
 
     FIXME( "%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid( &clsid ) );
     return REGDB_E_CLASSNOTREG;
