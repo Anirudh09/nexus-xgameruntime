@@ -1,0 +1,528 @@
+/* SPDX-License-Identifier: LGPL-2.1-or-later
+ * Read-only snapshots of extracted package chunk metadata. No installation,
+ * licensing or download capability is inferred from a layout declaration. */
+#define CHUNKS_MAX 4096
+#define CHUNKS_TEXT_MAX 1024
+#define CHUNKS_FILES_MAX 65536
+
+struct chunk_file
+{
+    WCHAR path[MAX_PATH];
+    UINT64 bytes;
+    UINT chunk; /* CHUNKS_MAX denotes the registration chunk. */
+};
+
+struct installed_chunk
+{
+    UINT32 id;
+    char *attributes[3]; /* language, tag, feature */
+    XPackageChunkAvailability availability;
+};
+struct chunk_snapshot
+{
+    UINT count, groups;
+    XPackageChunkAvailability registration;
+    BOOL track_sizes;
+    UINT file_count, file_capacity;
+    struct chunk_file *files;
+    struct installed_chunk chunks[CHUNKS_MAX];
+};
+
+static void chunks_free( struct chunk_snapshot *snapshot )
+{
+    UINT i, j;
+    if ( !snapshot ) return;
+    for ( i = 0; i < snapshot->count; i++ )
+        for ( j = 0; j < 3; j++ )
+            free( snapshot->chunks[i].attributes[j] );
+    free( snapshot->files );
+    free( snapshot );
+}
+
+static BOOL chunks_identifier( const char *id )
+{
+    UINT i;
+    if ( !id || strlen( id ) != 32 ) return FALSE;
+    for ( i = 0; i < 32; i++ )
+        if ( !( ( id[i] >= '0' && id[i] <= '9' ) || ( id[i] >= 'a' && id[i] <= 'f' ) ||
+                ( id[i] >= 'A' && id[i] <= 'F' ) ) )
+            return FALSE;
+    return TRUE;
+}
+
+/* Resolve only the running package or content already admitted by the shared
+ * related-content discovery rules. Never use an identifier as a filesystem path. */
+static HRESULT chunks_resolve( const char *id, WCHAR *out )
+{
+    struct content_package *package;
+    struct content_snapshot *snapshot;
+    struct content_game current;
+    WCHAR path[MAX_PATH], file[MAX_PATH], pattern[MAX_PATH], *sep;
+    WIN32_FIND_DATAW data;
+    HANDLE find;
+    char candidate[33];
+    UINT i, matches = 0;
+    HRESULT hr = E_GAMEPACKAGE_NO_PACKAGE_IDENTIFIER;
+
+    if ( !chunks_identifier( id ) ) return E_INVALIDARG;
+    if ( !( package = static_cast<std::remove_reference_t<decltype( package )>>( calloc( 1, sizeof( *package ) ) ) ) )
+        return E_OUTOFMEMORY;
+    current = GetContentConfiguration();
+    if ( GetModuleFileNameW( NULL, path, MAX_PATH ) && ( sep = wcsrchr( path, '\\' ) ) )
+    {
+        *sep = 0;
+        while ( content_join( path, L"MicrosoftGame.config", file ) )
+        {
+            if ( GetFileAttributesW( file ) != INVALID_FILE_ATTRIBUTES )
+            {
+                if ( content_load( path, package ) && !package->content &&
+                     ( !current.identity[0] || ( !strcmp( current.identity, package->identity ) &&
+                                                 !strcmp( current.publisher, package->publisher_id ) &&
+                                                 !strcmp( current.store, package->store ) ) ) &&
+                     content_join( path, L"layout_*.xml", pattern ) &&
+                     ( find = FindFirstFileW( pattern, &data ) ) != INVALID_HANDLE_VALUE )
+                {
+                    do
+                    {
+                        if ( !( data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ) &&
+                             content_layout_id( data.cFileName, candidate ) && !stricmp( candidate, id ) )
+                            matches++;
+                    } while ( FindNextFileW( find, &data ) );
+                    FindClose( find );
+                    if ( matches == 1 )
+                    {
+                        wcscpy( out, path );
+                        free( package );
+                        return S_OK;
+                    }
+                }
+                break;
+            }
+            if ( !( sep = wcsrchr( path, '\\' ) ) || sep <= path + 2 ) break;
+            *sep = 0;
+        }
+    }
+    free( package );
+    if ( !( snapshot =
+                static_cast<std::remove_reference_t<decltype( snapshot )>>( calloc( 1, sizeof( *snapshot ) ) ) ) )
+        return E_OUTOFMEMORY;
+    snapshot->current = current;
+    if ( SUCCEEDED( hr = content_discover( snapshot ) ) )
+    {
+        hr = E_GAMEPACKAGE_NO_PACKAGE_IDENTIFIER;
+        matches = 0;
+        for ( i = 0; i < snapshot->count; i++ )
+            if ( !stricmp( snapshot->packages[i].identifier, id ) &&
+                 content_matches( snapshot, &snapshot->packages[i], XPackageEnumerationScope::ThisAndRelated ) )
+            {
+                wcscpy( out, snapshot->packages[i].path );
+                matches++;
+            }
+        if ( matches == 1 ) hr = S_OK;
+    }
+    free( snapshot );
+    return hr;
+}
+
+static BOOL chunks_number( const char *text, UINT32 *number )
+{
+    UINT64 value = 0;
+    if ( !text || !*text ) return FALSE;
+    for ( ; *text; text++ )
+    {
+        if ( *text < '0' || *text > '9' ) return FALSE;
+        value = value * 10 + *text - '0';
+        if ( value > 0xffffffffu ) return FALSE;
+    }
+    *number = value;
+    return TRUE;
+}
+
+/* Token iteration owns no storage and never mutates the XML/caller's buffer. */
+static BOOL chunks_token( const char **cursor, char *out )
+{
+    const char *start = *cursor, *end;
+    SIZE_T length;
+    if ( !start || !*start ) return FALSE;
+    end = strchr( start, ';' );
+    if ( !end ) end = start + strlen( start );
+    *cursor = *end ? end + 1 : NULL;
+    while ( start < end && ( *start == ' ' || *start == '\t' ) )
+        start++;
+    while ( end > start && ( end[-1] == ' ' || end[-1] == '\t' ) )
+        end--;
+    length = end - start;
+    if ( !length || length > CHUNKS_TEXT_MAX )
+    {
+        out[0] = 0;
+        return TRUE;
+    }
+    memcpy( out, start, length );
+    out[length] = 0;
+    return TRUE;
+}
+
+static BOOL chunks_contains( const char *list, const char *value, BOOL language )
+{
+    char token[CHUNKS_TEXT_MAX + 1];
+    while ( chunks_token( &list, token ) )
+        if ( language ? !stricmp( token, value ) : !strcmp( token, value ) ) return TRUE;
+    return FALSE;
+}
+
+static HRESULT chunks_attribute( xmlNodePtr node, const char *name, char **out )
+{
+    xmlChar *value = xmlGetProp( node, ( xmlChar * )name );
+    const char *cursor;
+    char token[CHUNKS_TEXT_MAX + 1];
+    HRESULT hr = S_OK;
+    *out = NULL;
+    if ( !value ) return S_OK;
+    cursor = ( char * )value;
+    if ( !*cursor || strlen( cursor ) > CHUNKS_TEXT_MAX || cursor[strlen( cursor ) - 1] == ';' )
+        hr = HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
+    while ( SUCCEEDED( hr ) && chunks_token( &cursor, token ) )
+        if ( !token[0] ) hr = HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
+    if ( SUCCEEDED( hr ) && !( *out = strdup( ( char * )value ) ) ) hr = E_OUTOFMEMORY;
+    xmlFree( value );
+    return hr;
+}
+
+/* SourcePath is a build-machine path when DestinationPath exists. Only the
+ * extracted destination is queried, with Windows case-insensitive lookup.
+ * Symbolic links in a legitimate temporary launch view are readable files too;
+ * no file content is read, and no ownership assertion is made. */
+static HRESULT chunks_record_file( struct chunk_snapshot *snapshot, UINT chunk, const WCHAR *path, UINT64 bytes )
+{
+    struct chunk_file *files, *file;
+    UINT capacity;
+    if ( !snapshot->track_sizes ) return S_OK;
+    if ( snapshot->file_count == CHUNKS_FILES_MAX ) return HRESULT_FROM_WIN32( ERROR_MORE_DATA );
+    if ( snapshot->file_count == snapshot->file_capacity )
+    {
+        capacity = snapshot->file_capacity ? snapshot->file_capacity * 2 : 64;
+        if ( !( files = static_cast<std::remove_reference_t<decltype( files )>>(
+                    realloc( snapshot->files, capacity * sizeof( *files ) ) ) ) )
+            return E_OUTOFMEMORY;
+        snapshot->files = files;
+        snapshot->file_capacity = capacity;
+    }
+    file = &snapshot->files[snapshot->file_count++];
+    wcscpy( file->path, path );
+    file->bytes = bytes;
+    file->chunk = chunk;
+    return S_OK;
+}
+
+static HRESULT chunks_files( const WCHAR *root, xmlNodePtr chunk, struct chunk_snapshot *snapshot, UINT chunk_index,
+                             XPackageChunkAvailability *availability )
+{
+    xmlNodePtr node;
+    char location[MAX_PATH], include[MAX_PATH];
+    const char *relative;
+    WCHAR wide[MAX_PATH], directory[MAX_PATH], pattern[MAX_PATH], file[MAX_PATH];
+    WCHAR *p;
+    WIN32_FIND_DATAW data;
+    HANDLE find, readable;
+    UINT entries;
+    BOOL found;
+    LARGE_INTEGER size;
+    HRESULT hr;
+    *availability = XPackageChunkAvailability::Ready;
+    for ( node = chunk->children; node; node = node->next )
+    {
+        if ( node->type != XML_ELEMENT_NODE ) continue;
+        if ( strcmp( ( char * )node->name, "FileGroup" ) || ++snapshot->groups > 16384 ||
+             !content_text( node, "Include", include, sizeof( include ) ) || !content_relative( include, TRUE ) )
+            return HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
+        if ( xmlHasProp( node, ( xmlChar * )"Exclude" ) || node->children ) return E_NOTIMPL;
+        relative = location;
+        if ( xmlHasProp( node, ( xmlChar * )"DestinationPath" ) )
+        {
+            if ( !content_text( node, "DestinationPath", location, sizeof( location ) ) )
+                return HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
+            if ( *relative == '\\' || *relative == '/' ) relative++;
+            if ( !*relative ) relative = ".";
+        }
+        else if ( !content_text( node, "SourcePath", location, sizeof( location ) ) )
+            return HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
+        if ( !content_relative( relative, FALSE ) ||
+             !MultiByteToWideChar( CP_UTF8, MB_ERR_INVALID_CHARS, relative, -1, wide, MAX_PATH ) )
+            return HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
+        for ( p = wide; *p; p++ )
+            if ( *p == '/' ) *p = '\\';
+        if ( !content_join( root, wide, directory ) ||
+             !MultiByteToWideChar( CP_UTF8, MB_ERR_INVALID_CHARS, include, -1, wide, MAX_PATH ) )
+            return HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
+        for ( p = wide; *p; p++ )
+            if ( *p == '/' ) *p = '\\';
+        if ( !content_join( directory, wide, pattern ) ) return HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
+        if ( ( find = FindFirstFileW( pattern, &data ) ) == INVALID_HANDLE_VALUE )
+        {
+            *availability = XPackageChunkAvailability::Unavailable;
+            continue;
+        }
+        found = FALSE;
+        entries = 0;
+        do
+        {
+            if ( ++entries > 16384 )
+            {
+                FindClose( find );
+                return HRESULT_FROM_WIN32( ERROR_MORE_DATA );
+            }
+            if ( data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ) continue;
+            found = TRUE;
+            /* Include can contain a relative subdirectory before its leaf. */
+            wcscpy( file, pattern );
+            if ( wcsrchr( file, '\\' ) )
+                *( wcsrchr( file, '\\' ) + 1 ) = 0;
+            else
+            {
+                FindClose( find );
+                return HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
+            }
+            if ( wcslen( file ) + wcslen( data.cFileName ) >= MAX_PATH )
+            {
+                FindClose( find );
+                return HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
+            }
+            wcscat( file, data.cFileName );
+            readable = CreateFileW( file, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL );
+            if ( readable == INVALID_HANDLE_VALUE )
+                *availability = XPackageChunkAvailability::Unavailable;
+            else
+            {
+                hr = S_OK;
+                if ( snapshot->track_sizes )
+                {
+                    if ( !GetFileSizeEx( readable, &size ) || size.QuadPart < 0 )
+                        *availability = XPackageChunkAvailability::Unavailable;
+                    else
+                        hr = chunks_record_file( snapshot, chunk_index, file, size.QuadPart );
+                }
+                CloseHandle( readable );
+                if ( FAILED( hr ) )
+                {
+                    FindClose( find );
+                    return hr;
+                }
+            }
+        } while ( FindNextFileW( find, &data ) );
+        FindClose( find );
+        if ( !found ) *availability = XPackageChunkAvailability::Unavailable;
+    }
+    return S_OK;
+}
+
+static HRESULT chunks_features( struct chunk_snapshot *snapshot, xmlNodePtr root )
+{
+    xmlNodePtr feature, features = content_child( root, "Features" );
+    UINT i;
+    for ( feature = features ? features->children : NULL; feature; feature = feature->next )
+    {
+        char id[256], *tags = NULL;
+        HRESULT hr;
+        if ( feature->type != XML_ELEMENT_NODE ) continue;
+        if ( strcmp( ( char * )feature->name, "Feature" ) || !content_text( feature, "Id", id, sizeof( id ) ) ||
+             strchr( id, ';' ) )
+            return HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
+        if ( FAILED( hr = chunks_attribute( feature, "Tags", &tags ) ) ) return hr;
+        if ( !tags ) continue;
+        for ( i = 0; i < snapshot->count; i++ )
+        {
+            struct installed_chunk *chunk = &snapshot->chunks[i];
+            const char *cursor = tags;
+            char tag[CHUNKS_TEXT_MAX + 1];
+            BOOL match = FALSE;
+            while ( chunks_token( &cursor, tag ) )
+                if ( chunks_contains( chunk->attributes[1], tag, FALSE ) ) match = TRUE;
+            if ( match && !chunks_contains( chunk->attributes[2], id, FALSE ) )
+            {
+                char *value;
+                SIZE_T length = chunk->attributes[2] ? strlen( chunk->attributes[2] ) : 0;
+                if ( length + strlen( id ) + 1 > CHUNKS_TEXT_MAX )
+                {
+                    free( tags );
+                    return HRESULT_FROM_WIN32( ERROR_MORE_DATA );
+                }
+                if ( !( value = static_cast<std::remove_reference_t<decltype( value )>>(
+                            malloc( length + strlen( id ) + 2 ) ) ) )
+                {
+                    free( tags );
+                    return E_OUTOFMEMORY;
+                }
+                if ( length )
+                {
+                    memcpy( value, chunk->attributes[2], length );
+                    value[length++] = ';';
+                }
+                strcpy( value + length, id );
+                free( chunk->attributes[2] );
+                chunk->attributes[2] = value;
+            }
+        }
+        free( tags );
+    }
+    return S_OK;
+}
+
+static HRESULT chunks_load( const char *identifier, BOOL track_sizes, struct chunk_snapshot **out )
+{
+    WCHAR path[MAX_PATH], pattern[MAX_PATH], file[MAX_PATH];
+    WIN32_FIND_DATAW data;
+    HANDLE find;
+    xmlDocPtr doc = NULL;
+    xmlNodePtr root, node;
+    struct chunk_snapshot *snapshot;
+    char candidate[33], id[64];
+    UINT layouts = 0, i;
+    BOOL registration = FALSE, layout_valid = TRUE;
+    HRESULT hr;
+    *out = NULL;
+    if ( FAILED( hr = chunks_resolve( identifier, path ) ) ) return hr;
+    if ( !( snapshot =
+                static_cast<std::remove_reference_t<decltype( snapshot )>>( calloc( 1, sizeof( *snapshot ) ) ) ) )
+        return E_OUTOFMEMORY;
+    snapshot->track_sizes = track_sizes;
+    if ( !content_join( path, L"layout_*.xml", pattern ) ||
+         ( find = FindFirstFileW( pattern, &data ) ) == INVALID_HANDLE_VALUE )
+    {
+        chunks_free( snapshot );
+        return E_GAMEPACKAGE_NO_PACKAGE_IDENTIFIER;
+    }
+    hr = HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
+    do
+    {
+        if ( data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ) continue;
+        if ( ++layouts != 1 || !content_layout_id( data.cFileName, candidate ) || stricmp( candidate, identifier ) ||
+             !content_join( path, data.cFileName, file ) )
+        {
+            layout_valid = FALSE;
+            break;
+        }
+    } while ( FindNextFileW( find, &data ) );
+    FindClose( find );
+    if ( !layout_valid || layouts != 1 ) goto done;
+    doc = content_read_xml( file );
+    root = doc ? xmlDocGetRootElement( doc ) : NULL;
+    if ( !root || strcmp( ( char * )root->name, "Package" ) ) goto done;
+    for ( node = root->children; node; node = node->next )
+    {
+        struct installed_chunk *chunk;
+        if ( node->type != XML_ELEMENT_NODE ) continue;
+        if ( strcmp( ( char * )node->name, "Chunk" ) ) continue;
+        if ( !content_text( node, "Id", id, sizeof( id ) ) ) goto done;
+        if ( !strcmp( id, "Registration" ) )
+        {
+            if ( registration ) goto done;
+            registration = TRUE;
+            if ( FAILED( hr = chunks_files( path, node, snapshot, CHUNKS_MAX, &snapshot->registration ) ) ) goto done;
+            hr = HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
+            continue;
+        }
+        if ( snapshot->count == CHUNKS_MAX )
+        {
+            hr = HRESULT_FROM_WIN32( ERROR_MORE_DATA );
+            goto done;
+        }
+        chunk = &snapshot->chunks[snapshot->count++];
+        if ( !chunks_number( id, &chunk->id ) ) goto done;
+        for ( i = 0; i + 1 < snapshot->count; i++ )
+            if ( snapshot->chunks[i].id == chunk->id ) goto done;
+        if ( FAILED( hr = chunks_attribute( node, "Languages", &chunk->attributes[0] ) ) ||
+             FAILED( hr = chunks_attribute( node, "Tags", &chunk->attributes[1] ) ) ||
+             FAILED( hr = chunks_attribute( node, "Features", &chunk->attributes[2] ) ) ||
+             FAILED( hr = chunks_files( path, node, snapshot, snapshot->count - 1, &chunk->availability ) ) )
+            goto done;
+        hr = HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
+    }
+    if ( FAILED( hr = chunks_features( snapshot, root ) ) ) goto done;
+    *out = snapshot;
+    snapshot = NULL;
+    hr = S_OK;
+done:
+    if ( doc ) xmlFreeDoc( doc );
+    chunks_free( snapshot );
+    return hr;
+}
+
+static HRESULT enumerate_installed_chunks( const char *identifier, XPackageChunkSelectorType type, void *context,
+                                           XPackageChunkAvailabilityCallback *callback )
+{
+    struct chunk_snapshot *snapshot;
+    XPackageChunkSelector selector{};
+    UINT i, j;
+    int attribute;
+    HRESULT hr;
+    if ( !callback ) return E_INVALIDARG;
+    switch ( type )
+    {
+    case XPackageChunkSelectorType::Chunk:
+        attribute = -1;
+        break;
+    case XPackageChunkSelectorType::Language:
+        attribute = 0;
+        break;
+    case XPackageChunkSelectorType::Tag:
+        attribute = 1;
+        break;
+    case XPackageChunkSelectorType::Feature:
+        attribute = 2;
+        break;
+    default:
+        return E_INVALIDARG;
+    }
+    if ( FAILED( hr = chunks_load( identifier, FALSE, &snapshot ) ) ) return hr;
+    selector.type = type;
+    /* Each call owns a stable snapshot, holds no lock while calling title code,
+     * and can safely be reentered or stopped by the callback. */
+    for ( i = 0; i < snapshot->count; i++ )
+    {
+        struct installed_chunk *chunk = &snapshot->chunks[i];
+        const char *cursor;
+        char value[CHUNKS_TEXT_MAX + 1];
+        if ( attribute < 0 )
+        {
+            XPackageChunkAvailability availability = std::max( snapshot->registration, chunk->availability );
+            selector.chunkId = chunk->id;
+            if ( !callback( context, &selector, availability ) ) break;
+            continue;
+        }
+        cursor = chunk->attributes[attribute];
+        while ( chunks_token( &cursor, value ) )
+        {
+            XPackageChunkAvailability availability = snapshot->registration;
+            BOOL duplicate = FALSE;
+            for ( j = 0; j < i; j++ )
+                if ( chunks_contains( snapshot->chunks[j].attributes[attribute], value, attribute == 0 ) )
+                    duplicate = TRUE;
+            /* Repeated values within this chunk are emitted only once too. */
+            if ( !duplicate )
+            {
+                const char *earlier = chunk->attributes[attribute];
+                char token[CHUNKS_TEXT_MAX + 1];
+                while ( chunks_token( &earlier, token ) )
+                {
+                    if ( earlier == cursor ) break;
+                    if ( attribute == 0 ? !stricmp( token, value ) : !strcmp( token, value ) )
+                    {
+                        duplicate = TRUE;
+                        break;
+                    }
+                }
+            }
+            if ( duplicate ) continue;
+            for ( j = 0; j < snapshot->count; j++ )
+                if ( !snapshot->chunks[j].attributes[attribute] ||
+                     chunks_contains( snapshot->chunks[j].attributes[attribute], value, attribute == 0 ) )
+                    availability = std::max( availability, snapshot->chunks[j].availability );
+            selector.language = value;
+            if ( !callback( context, &selector, availability ) ) goto done;
+        }
+    }
+done:
+    chunks_free( snapshot );
+    return S_OK;
+}

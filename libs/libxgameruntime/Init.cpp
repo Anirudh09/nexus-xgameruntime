@@ -63,7 +63,8 @@ XGameRuntimeInitializeWithOptions(
 
     {
         std::lock_guard<std::mutex> lock( GlobalState::g_lock );
-        GlobalState::xgameruntime = LoadLibraryA( "xgameruntime.dll" );
+        if ( !GlobalState::xgameruntime )
+            GlobalState::xgameruntime = LoadLibraryA( "xgameruntime.dll" );
         if ( !GlobalState::xgameruntime )
         {
             ERR("xgameruntime.dll not found!\n");

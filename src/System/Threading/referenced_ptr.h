@@ -25,6 +25,13 @@
 template <typename TInterface>
 struct referenced_ptr
 {
+    static referenced_ptr adopt(TInterface* value) noexcept
+    {
+        referenced_ptr result;
+        result._ptr = value;
+        return result;
+    }
+
     referenced_ptr() noexcept
         : _ptr(nullptr)
     {}

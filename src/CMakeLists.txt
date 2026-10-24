@@ -11,17 +11,41 @@ add_dependencies(xgameruntime-impl
 
 # System
 target_sources(xgameruntime-impl PRIVATE
-        System/XThreading.cpp )
+        System/XGame.cpp
+        System/XNetworking.cpp
+        System/XAccessibility.cpp
+        System/XAppCapture.cpp
+        System/XGameActivation.cpp
+        System/XGameEvent.cpp
+        System/XGameInvite.cpp
+        System/XGameProtocol.cpp
+        System/XGameStreaming.cpp
+        System/XGameUi.cpp
+        System/XGameRuntimeFeature.cpp
+        System/XDisplay.cpp
+        System/XError.cpp
+        System/XStore.cpp
+        System/XPackage.cpp
+        System/XGameSave.cpp
+        System/XUser.cpp
+        HttpClient.cpp
+        System/XThreading.cpp
+        System/XSystem.cpp
+        System/PersistentStorage.cpp
+        Runtime/Xml.cpp
+        Runtime/Configuration.cpp
+        Runtime/Shutdown.cpp )
 
 # System/Threading (based on libHttpClient)
 target_sources(xgameruntime-impl PRIVATE
         System/Threading/ThreadPool.cpp
         System/Threading/WaitTimer.cpp
         System/Threading/XAsync.cpp
-        System/Threading/XTaskQueue.cpp )
+        System/Threading/XTaskQueue.cpp
+        System/Threading/QueueHandles.cpp )
 
 target_link_libraries( xgameruntime-impl PRIVATE
-        xgameruntime-common )
+        xgameruntime-common nexus-xml2 shell32 bcrypt advapi32 crypt32 runtimeobject ole32 winhttp wininet ws2_32 iphlpapi )
 
 target_include_directories(xgameruntime-impl
         PUBLIC
@@ -32,8 +56,13 @@ target_compile_features(xgameruntime-impl
         PUBLIC
         cxx_std_23 )
 
+set(XGAMERUNTIME_EXPORTS xgameruntime.def)
+if(MINGW AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+    set(XGAMERUNTIME_EXPORTS xgameruntime-x86.def)
+endif()
+
 add_library(xgameruntime SHARED
-        xgameruntime.def
+        ${XGAMERUNTIME_EXPORTS}
         ${IDL_GENERATED_FILES} )
 
 if(WIN32)
@@ -52,3 +81,11 @@ target_link_options(xgameruntime PRIVATE
         -static
         -static-libgcc
         -static-libstdc++ )
+
+include( GNUInstallDirs )
+include( ${PROJECT_SOURCE_DIR}/cmake/Builtin.cmake )
+
+# Proton supplies its architecture-specific Wine PE directory explicitly.
+install( TARGETS xgameruntime
+        RUNTIME DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} )

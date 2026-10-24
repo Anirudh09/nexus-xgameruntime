@@ -18,24 +18,11 @@
  */
 
 #include "XTaskQueue.h"
+#include "QueueHandles.h"
 
-inline ITaskQueue* GetQueue(XTaskQueueHandle handle)
+inline referenced_ptr<ITaskQueue> GetQueue(XTaskQueueHandle handle)
 {
-    if (handle->m_signature != TASK_QUEUE_SIGNATURE)
-    {
-        assert("Invalid XTaskQueueHandle");
-        return nullptr;
-    }
-
-    ITaskQueue* queue = handle->m_queue;
-
-    if (handle != queue->GetHandle())
-    {
-        assert(handle);
-    }
-
-    assert(queue->GetHandle()->m_signature == TASK_QUEUE_SIGNATURE);
-    return queue;
+    return nexus::acquire_queue(handle);
 }
 
 namespace ProcessGlobals
@@ -43,6 +30,7 @@ namespace ProcessGlobals
     const XTaskQueueHandle g_invalidQueueHandle = (XTaskQueueHandle)(-1);
     std::atomic<XTaskQueueHandle> g_defaultProcessQueue = { g_invalidQueueHandle };
     std::atomic<XTaskQueueHandle> g_processQueue = { g_invalidQueueHandle };
+    std::mutex g_processQueueLock;
 
 #ifdef SUSPEND_API
     SuspendState g_suspendState;
@@ -159,7 +147,6 @@ TaskQueuePortImpl::QueryInterface(
     *out = nullptr;
 
     if ( iid == __uuidof( IUnknown ) ||
-         iid == __uuidof( IInspectable ) ||
          iid == __uuidof( IAgileObject ) ||
          iid == __uuidof( TaskQueuePortImpl ) )
     {
@@ -546,7 +533,7 @@ bool TaskQueuePortImpl::DrainOneItem(
 
     if (m_queueList->empty() && m_processingCallback.load() == 0)
     {
-        SignalTerminations();
+        popped = SignalTerminations() || popped;
         SignalQueue();
     }
 
@@ -559,7 +546,8 @@ bool TaskQueuePortImpl::Wait(
 ) {
     while (m_suspended || (m_queueList->empty() && TerminationListEmpty()))
     {
-        if (portContext->GetStatus() == TaskQueuePortStatus::Terminated)
+        if (portContext->GetStatus() == TaskQueuePortStatus::Terminated &&
+            portContext->GetQueue()->IsTerminationComplete())
         {
             return false;
         }
@@ -1062,14 +1050,16 @@ void TaskQueuePortImpl::NotifyItemQueued()
     }
 }
 
-void TaskQueuePortImpl::SignalTerminations()
+bool TaskQueuePortImpl::SignalTerminations(bool workOnly)
 {
+    bool processed = false;
     LocklessQueue<TerminationEntry*> entries_to_process(*m_terminationList.get());
 
     {
         std::lock_guard<std::mutex> lock(m_terminationLock);
-        m_terminationList->remove_if([&entries_to_process](auto& entry, auto address)
+        m_terminationList->remove_if([&entries_to_process, workOnly](auto& entry, auto address)
         {
+            if (workOnly && entry->portContext->GetType() != XTaskQueuePort::Work) return false;
             if (entry->portContext->GetStatus() >= TaskQueuePortStatus::Terminating)
             {
                 entry->portContext->SetStatus(TaskQueuePortStatus::Terminated);
@@ -1085,6 +1075,7 @@ void TaskQueuePortImpl::SignalTerminations()
     uint64_t address;
     while (entries_to_process.pop_front(entry, address))
     {
+        processed = true;
         entry->portContext->AddRef();
         
         entry->callback(entry->callbackContext);
@@ -1097,17 +1088,24 @@ void TaskQueuePortImpl::SignalTerminations()
         entry->portContext->Release();
         delete entry;
     }
+    return processed;
 }
 
 void TaskQueuePortImpl::ScheduleTermination(
     TerminationEntry* term
 ) {
+    const bool work = term->portContext->GetType() == XTaskQueuePort::Work;
     {
         std::lock_guard<std::mutex> lock(m_terminationLock);
         m_terminationList->push_back(term, term->node);
         term->node = 0; // now owned by the list
     }
 
+    // An empty manual work port needs no application callback dispatch before
+    // advancing to completion. User termination callbacks still run on their
+    // completion port, never on this internal work-only fast path.
+    if (work && m_queueList->empty() && m_processingCallback.load() == 0)
+        SignalTerminations(true);
     SignalQueue();
     NotifyItemQueued();
 }
@@ -1207,11 +1205,11 @@ TaskQueueImpl::TaskQueueImpl() :
     m_header.m_signature = TASK_QUEUE_SIGNATURE;
     m_header.m_runtimeIteration = 0;
     m_header.m_queue = this;
-    m_termination.terminated = false;
 }
 
 TaskQueueImpl::~TaskQueueImpl()
 {
+    nexus::unregister_queue_object(this);
     // Zero the header so we get an early warning of using
     // a released object.
     m_header = {};
@@ -1228,7 +1226,6 @@ TaskQueueImpl::QueryInterface(
     *out = nullptr;
 
     if ( iid == __uuidof( IUnknown ) ||
-         iid == __uuidof( IInspectable ) ||
          iid == __uuidof( IAgileObject ) ||
          iid == __uuidof( TaskQueueImpl ) )
     {
@@ -1264,6 +1261,14 @@ TaskQueueImpl::Release()
     return curr;
 }
 
+bool TaskQueueImpl::TryAddRef() noexcept
+{
+    auto count = m_refs.load(std::memory_order_relaxed);
+    while (count && count != static_cast<ULONG>(-1))
+        if (m_refs.compare_exchange_weak(count, count + 1, std::memory_order_relaxed)) return true;
+    return false;
+}
+
 HRESULT TaskQueueImpl::Initialize(
     _In_ XTaskQueueDispatchMode workMode,
     _In_ XTaskQueueDispatchMode completionMode)
@@ -1289,7 +1294,7 @@ HRESULT TaskQueueImpl::Initialize(
     RETURN_IF_FAILED(m_suspendHandler.Initialize(ProcessGlobals::g_suspendState, this));
 #endif
 
-    return S_OK;
+    return nexus::register_queue_object(this);
 }
 
 HRESULT TaskQueueImpl::Initialize(
@@ -1311,7 +1316,7 @@ HRESULT TaskQueueImpl::Initialize(
     RETURN_IF_FAILED(m_suspendHandler.Initialize(ProcessGlobals::g_suspendState, this));
 #endif
 
-    return S_OK;
+    return nexus::register_queue_object(this);
 }
 
 HRESULT TaskQueueImpl::GetPortContext(
@@ -1404,6 +1409,13 @@ HRESULT TaskQueueImpl::Terminate(
 {
     std::unique_ptr<TerminationEntry> entry(new (std::nothrow) TerminationEntry);
     RETURN_IF_NULL_ALLOC(entry);
+    TerminationData completion{};
+    if (wait)
+    {
+        // This frame cannot leave until the callback signals this request.
+        // Its mutex also ensures callback access ends before the waiter returns.
+        entry->completion = &completion;
+    }
 
     entry->owner = this;
     entry->level = TerminationLevel::Work;
@@ -1430,14 +1442,16 @@ HRESULT TaskQueueImpl::Terminate(
         AddRef();
     }
 
+    m_terminationRequests.fetch_add(1);
+    m_terminationStarted.store(true);
     m_work.Port->Terminate(workToken);
     
     if (wait)
     {
-        std::unique_lock<std::mutex> lock(m_termination.lock);
-        while(!m_termination.terminated)
+        std::unique_lock<std::mutex> lock(completion.lock);
+        while(!completion.terminated)
         {
-            m_termination.cv.wait(lock);
+            completion.cv.wait(lock);
         }
 
         m_work.Port->WaitForUnwind();
@@ -1501,10 +1515,14 @@ void TaskQueueImpl::OnTerminationCallback(_In_ void* context)
                 entry->callback(entry->context);
             }
 
+            entry->owner->m_terminationRequests.fetch_sub(1);
+            entry->owner->m_work.Port->WakeDispatchers();
+            entry->owner->m_completion.Port->WakeDispatchers();
+            if (entry->completion)
             {
-                std::unique_lock<std::mutex> lock(entry->owner->m_termination.lock);
-                entry->owner->m_termination.terminated = true;
-                entry->owner->m_termination.cv.notify_all();
+                std::unique_lock<std::mutex> lock(entry->completion->lock);
+                entry->completion->terminated = true;
+                entry->completion->cv.notify_all();
             }
 
             entry->owner->Release();
@@ -1542,7 +1560,6 @@ TaskQueuePortContextImpl::QueryInterface(
     *out = nullptr;
 
     if ( iid == __uuidof( IUnknown ) ||
-         iid == __uuidof( IInspectable ) ||
          iid == __uuidof( IAgileObject ) ||
          iid == __uuidof( TaskQueuePortContextImpl ) )
     {
@@ -1750,21 +1767,7 @@ static HRESULT CreateTaskQueueHandle(
     ITaskQueue* impl,
     XTaskQueueHandle* queue
 ) {
-    *queue = nullptr;
-
-    std::unique_ptr<XTaskQueueObject> q(new (std::nothrow) XTaskQueueObject);
-    RETURN_IF_NULL_ALLOC(q);
-
-    q->m_signature = TASK_QUEUE_SIGNATURE;
-    q->m_runtimeIteration = 0;
-    q->m_queue = impl;
-    impl->AddRef();
-
-    *queue = q.release();
-
-    TRACE("created new handle %p\n", *queue);
-
-    return S_OK;
+    return nexus::create_queue_handle(impl, queue);
 }
 
 /**
@@ -1776,6 +1779,7 @@ HRESULT XTaskQueueCreate(
     XTaskQueueDispatchMode completionDispatchMode,
     XTaskQueueHandle* queue
 ) {
+    RETURN_HR_IF(E_POINTER, queue == nullptr);
     *queue = nullptr;
 
     referenced_ptr<TaskQueueImpl> aq(new (std::nothrow) TaskQueueImpl);
@@ -1797,6 +1801,8 @@ HRESULT XTaskQueueGetPort(
     XTaskQueuePort port,
     XTaskQueuePortHandle* portHandle
 ) {
+    RETURN_HR_IF(E_POINTER, portHandle == nullptr);
+    *portHandle = nullptr;
     referenced_ptr<ITaskQueue> aq(GetQueue(queue));
     RETURN_HR_IF(E_GAMERUNTIME_INVALID_HANDLE, aq == nullptr);
 
@@ -1813,6 +1819,7 @@ HRESULT XTaskQueueCreateComposite(
     XTaskQueuePortHandle completionPort,
     XTaskQueueHandle* queue
 ) {
+    RETURN_HR_IF(E_POINTER, queue == nullptr);
     *queue = nullptr;
 
     referenced_ptr<TaskQueueImpl> aq(new (std::nothrow) TaskQueueImpl);
@@ -1868,19 +1875,7 @@ BOOLEAN XTaskQueueIsEmpty(
 void XTaskQueueCloseHandle(
     XTaskQueueHandle queue
 ) {
-    ITaskQueue* aq = GetQueue(queue);
-
-    if (aq != nullptr)
-    {
-        if (USE_UNIQUE_HANDLES && queue != aq->GetHandle())
-        {
-            queue->m_signature = 0;
-            queue->m_queue = nullptr;
-            delete queue;
-        }
-
-        aq->Release();
-    }
+    nexus::close_queue_handle(queue);
 }
 
 HRESULT XTaskQueueTerminate(
@@ -1890,6 +1885,7 @@ HRESULT XTaskQueueTerminate(
     XTaskQueueTerminatedCallback* callback
 ) {
     referenced_ptr<ITaskQueue> aq(GetQueue(queue));
+    RETURN_HR_IF(E_GAMERUNTIME_INVALID_HANDLE, aq == nullptr);
     return aq->Terminate(wait, callbackContext, callback);
 }
 
@@ -1959,12 +1955,11 @@ HRESULT XTaskQueueDuplicateHandleWithOptions(
 
     if (USE_UNIQUE_HANDLES && (options != XTaskQueueDuplicateOptions::Reference))
     {
-        RETURN_IF_FAILED(CreateTaskQueueHandle(queue, duplicatedHandle));
+        RETURN_IF_FAILED(CreateTaskQueueHandle(queue.get(), duplicatedHandle));
     }
     else
     {
-        queue->AddRef();
-        *duplicatedHandle = queue->GetHandle();
+        RETURN_IF_FAILED(nexus::reference_queue_handle(queue.get(), duplicatedHandle));
     }
 
     TRACE("created new handle %p\n", *duplicatedHandle);
@@ -2010,7 +2005,9 @@ bool XTaskQueueGetCurrentProcessTaskQueueWithOptions(
     XTaskQueueDuplicateOptions options,
     XTaskQueueHandle* queue
 ) {
+    if (!queue) return false;
     *queue = nullptr;
+    std::lock_guard<std::mutex> processGuard(ProcessGlobals::g_processQueueLock);
 
     XTaskQueueHandle processQueue = ProcessGlobals::g_processQueue;
     if (processQueue == ProcessGlobals::g_invalidQueueHandle)
@@ -2069,7 +2066,11 @@ void XTaskQueueSetCurrentProcessTaskQueue(
         FAIL_FAST_IF_FAILED(XTaskQueueDuplicateHandle(queue, &newQueue));
     }
 
-    XTaskQueueHandle previous = ProcessGlobals::g_processQueue.exchange(newQueue);
+    XTaskQueueHandle previous;
+    {
+        std::lock_guard<std::mutex> processGuard(ProcessGlobals::g_processQueueLock);
+        previous = ProcessGlobals::g_processQueue.exchange(newQueue);
+    }
     if (previous != nullptr && previous != ProcessGlobals::g_invalidQueueHandle)
     {
         XTaskQueueCloseHandle(previous);

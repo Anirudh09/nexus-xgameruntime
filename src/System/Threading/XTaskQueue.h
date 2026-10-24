@@ -30,6 +30,7 @@
 
 #include <mutex>
 #include <condition_variable>
+#include <memory>
 
 // For debugging purposes
 #define USE_UNIQUE_HANDLES true
@@ -107,6 +108,7 @@ struct XTaskQueueTestHooks
 
 struct ITaskQueuePort : IUnknown
 {
+    virtual void WINAPI WakeDispatchers() = 0;
     virtual ~ITaskQueuePort() = default;
 
     virtual XTaskQueuePortHandle WINAPI GetHandle() = 0;
@@ -189,6 +191,7 @@ struct ITaskQueuePortContext : IUnknown
 
 struct ITaskQueue : IUnknown
 {
+    virtual bool WINAPI IsTerminationComplete() const noexcept = 0;
     virtual ~ITaskQueue() = default;
 
     virtual XTaskQueueHandle WINAPI GetHandle() = 0;
@@ -284,6 +287,7 @@ public:
 
     TaskQueuePortImpl();
     virtual ~TaskQueuePortImpl();
+    void WINAPI WakeDispatchers() override { SignalQueue(); }
 
     HRESULT WINAPI QueryInterface( REFIID iid, void **out ) override;
     ULONG WINAPI AddRef() override;
@@ -435,7 +439,7 @@ private:
         uint64_t dueTime,
         uint64_t now);
 
-    void SignalTerminations();
+    bool SignalTerminations(bool workOnly = false);
     void ScheduleTermination(TerminationEntry* term);
     bool TerminationListEmpty();
 
@@ -520,6 +524,11 @@ class TaskQueueImpl : public ITaskQueue
 public:
     TaskQueueImpl();
     virtual ~TaskQueueImpl();
+    bool TryAddRef() noexcept;
+    bool WINAPI IsTerminationComplete() const noexcept override
+    {
+        return m_terminationStarted.load() && m_terminationRequests.load() == 0;
+    }
 
     HRESULT WINAPI QueryInterface( REFIID iid, void **out ) override;
     ULONG WINAPI AddRef() override;
@@ -584,6 +593,7 @@ private:
         Completion
     };
 
+    struct TerminationData;
     struct TerminationEntry
     {
         TaskQueueImpl* owner;
@@ -591,6 +601,7 @@ private:
         void* completionPortToken;
         void* context;
         XTaskQueueTerminatedCallback* callback;
+        TerminationData* completion = nullptr;
     };
 
     struct TerminationData
@@ -603,7 +614,8 @@ private:
     XTaskQueueObject m_header = { };
     SubmitCallback m_callbackSubmitted;
     QueueWaitRegistry m_waitRegistry;
-    TerminationData m_termination;
+    std::atomic<bool> m_terminationStarted{false};
+    std::atomic<SIZE_T> m_terminationRequests{0};
     TaskQueuePortContextImpl m_work;
     TaskQueuePortContextImpl m_completion;
     XTaskQueueTestHooks* m_testHooks = nullptr;
