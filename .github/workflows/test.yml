@@ -1,16 +1,52 @@
-on: pull_request
-
+name: C++ component checks
+on:
+  push:
+    branches: [main, develop, 'feature/**', 'fix/**']
+  pull_request:
+    branches: [main, develop]
+permissions:
+  contents: read
 jobs:
-  test:
-    # TODO switch to wine/proton
-    runs-on: windows-latest
+  component:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [win64, win32]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Configure
-        run: cmake -S . -B build -G "MinGW Makefiles" -DENABLE_TESTS=ON
-      - name: Build
-        run: cmake --build build --parallel
-      - name: Run tests
-        run: ctest --test-dir build --output-on-failure
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install bounded component test prerequisites
+        timeout-minutes: 12
+        run: |
+          sudo "$(command -v node)" scripts/ci/ubuntu-mirror.mjs
+          sudo dpkg --add-architecture i386
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 install -y --no-install-recommends cmake make gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 gcc-mingw-w64-i686 g++-mingw-w64-i686 wine wine64 wine32:i386 wine64-tools xvfb xauth
+          for arch in x86_64 i686; do
+            sudo update-alternatives --set $arch-w64-mingw32-gcc /usr/bin/$arch-w64-mingw32-gcc-posix
+            sudo update-alternatives --set $arch-w64-mingw32-g++ /usr/bin/$arch-w64-mingw32-g++-posix
+          done
+          echo /usr/lib/wine >> "$GITHUB_PATH"
+      - name: Check ABI and account-free CI policy
+        run: node --test scripts/test-policy.test.mjs
+      - name: Compile C++ component and synthetic tests only
+        run: |
+          cmake -S . -B build/component -DCMAKE_TOOLCHAIN_FILE=${{ matrix.arch }}-target.cmake -DENABLE_TESTS=ON -DNEXUS_MIGRATION_PROBES=ON
+          cmake --build build/component --parallel 4
+      - name: Run account-free component contracts
+        run: xvfb-run -a node scripts/test-component.mjs build/component
+      - name: Retain component results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: component-results-${{ matrix.arch }}
+          path: |
+            build/component/nexus-component-test-*/results.json
+            build/component/nexus-component-test-*/*.log
+          retention-days: 7
