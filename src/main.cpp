@@ -39,6 +39,7 @@
 #include "System/XGame.h"
 #include "System/PersistentStorage.h"
 #include "Runtime/Configuration.h"
+#include "Runtime/Shutdown.h"
 #include <xpersistentlocalstorage.h>
 #include "Runtime/StoreDiagnostics.h"
 
@@ -177,10 +178,14 @@ HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
     return REGDB_E_CLASSNOTREG;
 }
 
+HRESULT WINAPI NexusRegisterCloudShutdown(nexus::CloudShutdownCallback callback,void *context)
+{
+    return nexus::RegisterCloudShutdown(callback,context);
+}
+
 HRESULT WINAPI UninitializeApiImpl()
 {
-    TRACE("stub!\n");
-    return E_NOTIMPL;
+    return nexus::DrainCloudShutdown();
 }
 
 HRESULT WINAPI XErrorReport( HRESULT status, LPCSTR message )

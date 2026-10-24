@@ -198,3 +198,12 @@ test('optional API families use actual C++ providers without fabricated availabi
     }
     assert.match(read('tests/Nexus/test_optional_providers.cpp'),/DisplayAndLauncherShareCanonicalIUnknown/);
 });
+
+test('the C++ runtime preserves the explicit cloud shutdown drain outside DllMain',()=>{
+    assert.match(read('src/main.cpp'),/return nexus::DrainCloudShutdown/);
+    assert.match(read('src/xgameruntime.def'),/NexusRegisterCloudShutdown/);
+    assert.match(read('src/xgameruntime-x86.def'),/NexusRegisterCloudShutdown=NexusRegisterCloudShutdown@8/);
+    assert.match(read('tests/Nexus/test_shutdown.cpp'),/ReentrantConcurrentRegistration/);
+    const loader=read('src/main.cpp').split('HRESULT WINAPI InitializeApiImplEx2')[0];
+    assert.doesNotMatch(loader,/DrainCloudShutdown\(|WaitFor|RegisterCloudShutdown\(/);
+});

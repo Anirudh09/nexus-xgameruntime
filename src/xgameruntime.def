@@ -5,6 +5,7 @@ EXPORTS
     InitializeApiImpl
     InitializeApiImplEx
     InitializeApiImplEx2
+    NexusRegisterCloudShutdown
     UninitializeApiImpl
     XErrorReport
 XodusSaveFilesMonitor

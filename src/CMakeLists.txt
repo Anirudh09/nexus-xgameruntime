@@ -33,7 +33,8 @@ target_sources(xgameruntime-impl PRIVATE
         System/XSystem.cpp
         System/PersistentStorage.cpp
         Runtime/Xml.cpp
-        Runtime/Configuration.cpp )
+        Runtime/Configuration.cpp
+        Runtime/Shutdown.cpp )
 
 # System/Threading (based on libHttpClient)
 target_sources(xgameruntime-impl PRIVATE
