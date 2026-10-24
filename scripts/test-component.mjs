@@ -16,7 +16,7 @@ const probes = [
     ['nexus_package-content',332], ['nexus_package-monitors', 362], ['nexus_package-progress-bytes', 115],
     ['nexus_gamesave-sync', 283], ['nexus_gamesave-transfer', 263], ['nexus_gamesave-files', 25],
 ];
-const binaries = ['xgameruntime.dll', 'test_xgameruntime.exe', 'test_nexus_configuration.exe', 'test_nexus_timer.exe', 'test_nexus_save.exe', 'test_nexus_user.exe', 'nexus_store-entitlements.exe', 'nexus_runtime-init.exe', ...probes.map(([name]) => name + '.exe')];
+const binaries = ['xgameruntime.dll', 'test_xgameruntime.exe', 'test_nexus_configuration.exe', 'test_nexus_timer.exe', 'test_nexus_save.exe', 'test_nexus_user.exe', 'test_nexus_async_identity.exe', 'nexus_user-privilege.exe', 'nexus_store-entitlements.exe', 'nexus_runtime-init.exe', ...probes.map(([name]) => name + '.exe')];
 const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const snapshot = () => Object.fromEntries(binaries.map(name => [name, hash(path.join(bin, name))]));
 const before = snapshot(); // Refuse incomplete or tests-disabled builds before creating a prefix.
@@ -58,6 +58,10 @@ try {
     if (!match || Number(match[1]) < 73 || /\[\s*(SKIPPED|FAILED)\s*\]/.test(units))
         throw Error('Missing, skipped or failed C++ unit coverage');
     proof.results.push({name: 'cpp-unit', checks: Number(match[1]), failures: 0});
+    const identities=execute('async-identity-unit','wine',[path.join(bin,'test_nexus_async_identity.exe')]);
+    const identityMatch=identities.match(/\[\s*PASSED\s*\]\s+(\d+) tests/);
+    if(!identityMatch || Number(identityMatch[1])<3 || /\[\s*(SKIPPED|FAILED)\s*\]/.test(identities))throw Error('Typed async identity regressions failed');
+    proof.results.push({name:'async-identity-unit',checks:Number(identityMatch[1]),failures:0});
     const timers = execute('timer-unit', 'wine', [path.join(bin, 'test_nexus_timer.exe')]);
     const timerMatch = timers.match(/\[\s*PASSED\s*\]\s+(\d+) tests/);
     if (!timerMatch || Number(timerMatch[1]) < 2 || /\[\s*(SKIPPED|FAILED)\s*\]/.test(timers)) throw Error('Monotonic timer regressions failed');

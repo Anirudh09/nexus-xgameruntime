@@ -210,7 +210,7 @@ test('the C++ runtime preserves the explicit cloud shutdown drain outside DllMai
 
 test('all original user fixture assertions remain in actual C++ source tests',()=>{
     const lock=JSON.parse(read('tests/Nexus/user-contracts.lock.json'));
-    for(const [key,file]of [['device','user-device-association'],['audio','user-audio'],['metadata','windows-account-metadata']])
+    for(const [key,file]of [['device','user-device-association'],['audio','user-audio'],['metadata','windows-account-metadata'],['privilege','user-privilege']])
     {
         const entry=lock[key],source=read('tests/Nexus/'+file+'.cpp');
         const checks=[...source.matchAll(/\bCHECK\(\s*"([^"\n]+)"/g)].map(x=>x[1]).filter(x=>!(entry.addedChecks||[]).includes(x));
@@ -219,4 +219,11 @@ test('all original user fixture assertions remain in actual C++ source tests',()
     }
     assert.match(read('tests/Nexus/user-audio.cpp'),/public IMMDeviceEnumerator/);
     assert.match(read('tests/Nexus/windows-account-metadata.cpp'),/System\/User\/Tickets.h/);
+});
+test('privilege result APIs never decode opaque async bytes or export an identity hook',()=>{
+    assert.doesNotMatch(read('src/System/User/Privileges.h'),/async->internal/);
+    assert.match(read('src/System/User/Privileges.h'),/GetAsyncStatusForIdentity/);
+    assert.doesNotMatch(read('src/xgameruntime.def')+read('src/xgameruntime-x86.def'),/GetAsyncStatusForIdentity/);
+    assert.match(read('src/System/Threading/XAsync.cpp'),/completedIdentity==state->identity/);
+    assert.match(read('tests/Nexus/test_async_identity.cpp'),/ConcurrentCompletionNeverInterpretsTerminalIdentityAsLiveState/);
 });

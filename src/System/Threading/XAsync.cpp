@@ -23,11 +23,13 @@
 
 #include <atomic>
 #include <condition_variable>
+#include "AsyncIdentity.h"
 #include <type_traits>
 
 // Signatures can be anything because these are not exposed to the client.
 #define ASYNC_BLOCK_SIG         0x41535942 // ASYB
 #define ASYNC_BLOCK_RESULT_SIG  0x41535242 // ASRB
+#define ASYNC_BLOCK_DONE_SIG    0x41534442 // ASDB
 #define ASYNC_STATE_SIG         0x41535445 // ASTE
 
 std::atomic<uint32_t> s_AsyncLibGlobalStateCount{ 0 };
@@ -124,12 +126,20 @@ private:
 
 struct AsyncBlockInternal
 {
-    AsyncState* state = nullptr;
+    // Once state is detached, the same pointer-sized slot retains only the
+    // operation identity. The signature discriminates it, including on x86
+    // where the public opaque buffer has no spare pointer-sized storage.
+    union
+    {
+        AsyncState* state = nullptr;
+        const void* completedIdentity;
+    };
     HRESULT status = E_PENDING;
-    DWORD signature = ASYNC_BLOCK_SIG;
+    std::atomic<DWORD> signature{ASYNC_BLOCK_SIG};
     std::atomic_flag lock = ATOMIC_FLAG_INIT;
 };
 
+static_assert(std::atomic<DWORD>::is_always_lock_free, "Async signature publication must remain lock-free");
 static_assert(sizeof(AsyncBlockInternal) <= sizeof(XAsyncBlock::internal),
     "Unexpected size for AsyncBlockInternal");
 static_assert(std::alignment_of<AsyncBlockInternal>::value == std::alignment_of<void*>::value,
@@ -282,7 +292,7 @@ public:
             m_internal = reinterpret_cast<AsyncBlockInternal*>(asyncBlock->internal);
         }
 
-        if (m_internal->state != nullptr)
+        if (m_internal->signature == ASYNC_BLOCK_SIG && m_internal->state != nullptr)
         {
             m_userInternal = reinterpret_cast<AsyncBlockInternal*>(m_internal->state->userAsyncBlock->internal);
         }
@@ -311,7 +321,7 @@ public:
 
     AsyncStateRef GetState() const noexcept
     {
-        AsyncStateRef state{ m_internal->state };
+        AsyncStateRef state{ m_internal->signature == ASYNC_BLOCK_SIG ? m_internal->state : nullptr };
 
         if (state != nullptr && state->signature != ASYNC_STATE_SIG)
         {
@@ -324,9 +334,10 @@ public:
 
     AsyncStateRef ExtractState(bool resultsRetrieved = false) const noexcept
     {
-        AsyncStateRef state{ m_internal->state };
-        m_internal->state = nullptr;
-        m_userInternal->state = nullptr;
+        AsyncStateRef state{ m_internal->signature == ASYNC_BLOCK_SIG ? m_internal->state : nullptr };
+        const void* identity = state != nullptr ? state->identity : nullptr;
+        m_internal->completedIdentity = identity;
+        m_userInternal->completedIdentity = identity;
 
         if (resultsRetrieved)
         {
@@ -335,8 +346,8 @@ public:
         }
         else
         {
-            m_internal->signature = 0;
-            m_userInternal->signature = 0;
+            m_internal->signature = ASYNC_BLOCK_DONE_SIG;
+            m_userInternal->signature = ASYNC_BLOCK_DONE_SIG;
         }
 
         if (state != nullptr && state->signature != ASYNC_STATE_SIG)
@@ -351,6 +362,15 @@ public:
     HRESULT GetStatus() const noexcept
     {
         return m_internal->status;
+    }
+
+    bool MatchesIdentity(const void* identity) const noexcept
+    {
+        if (m_internal->signature == ASYNC_BLOCK_SIG)
+            return m_internal->state != nullptr && m_internal->state->identity == identity;
+        if (m_internal->signature == ASYNC_BLOCK_DONE_SIG || m_internal->signature == ASYNC_BLOCK_RESULT_SIG)
+            return m_internal->completedIdentity == identity;
+        return false;
     }
 
     bool GetResultsRetrieved()
@@ -388,11 +408,18 @@ private:
 
         if (lockedResult->signature != ASYNC_BLOCK_SIG)
         {
-            lockedResult->state = nullptr;
+            if (lockedResult->signature != ASYNC_BLOCK_DONE_SIG && lockedResult->signature != ASYNC_BLOCK_RESULT_SIG)
+                lockedResult->state = nullptr;
             return nullptr;
         }
 
         SpinLock::Lock(lockedResult->lock);
+        // Completion can replace state with the terminal identity while we wait.
+        if (lockedResult->signature != ASYNC_BLOCK_SIG)
+        {
+            lockedResult->lock.clear();
+            return nullptr;
+        }
 
         if (lockedResult->state != nullptr && asyncBlock != &lockedResult->state->providerAsyncBlock)
         {
@@ -402,7 +429,7 @@ private:
             AsyncBlockInternal* stateAsyncBlockInternal = reinterpret_cast<AsyncBlockInternal*>(state->providerAsyncBlock.internal);
             SpinLock::Lock(stateAsyncBlockInternal->lock);
 
-            if (stateAsyncBlockInternal->state == nullptr)
+            if (stateAsyncBlockInternal->signature != ASYNC_BLOCK_SIG || stateAsyncBlockInternal->state == nullptr)
             {
                 stateAsyncBlockInternal->lock.clear();
                 SpinLock::Lock(lockedResult->lock);
@@ -416,6 +443,13 @@ private:
         return lockedResult;
     }
 };
+
+HRESULT nexus::GetAsyncStatusForIdentity(XAsyncBlock* async,const void* identity) noexcept
+{
+    if (!async || !identity) return E_INVALIDARG;
+    AsyncBlockInternalGuard internal{async};
+    return internal.MatchesIdentity(identity) ? internal.GetStatus() : E_INVALIDARG;
+}
 
 static void CALLBACK CompletionCallback(void* context, BOOLEAN canceled);
 static void CALLBACK WorkerCallback(void* context, BOOLEAN canceled);
@@ -502,8 +536,11 @@ static void CleanupState(AsyncStateRef&& state)
 {
     if (state != nullptr)
     {
-        // Should only cleanup state after calling ExtractState to clear it.
-        assert((reinterpret_cast<AsyncBlockInternal*>(state->providerData.async->internal))->state == nullptr);
+        // ExtractState must have replaced ownership with the exact immutable
+        // identity, never a pointer still interpreted as an active state.
+        const auto* internal=reinterpret_cast<AsyncBlockInternal*>(state->providerData.async->internal);
+        assert(internal->signature==ASYNC_BLOCK_DONE_SIG || internal->signature==ASYNC_BLOCK_RESULT_SIG);
+        assert(internal->completedIdentity==state->identity);
 
         state->valid = false;
         state->Release();

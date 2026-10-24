@@ -3,6 +3,7 @@
  * age guesses. No credential, environment override or title-specific policy. */
 #ifndef XUSER_PRIVILEGE_H
 #define XUSER_PRIVILEGE_H
+#include "../Threading/AsyncIdentity.h"
 
 static const char privilege_identity = 0;
 
@@ -163,7 +164,7 @@ static HRESULT privilege_begin( IXThreadingImpl *threading, XUser *user, XUserPr
         return E_INVALIDARG;
     /* Reject a pending operation. Reuse from inside a completion callback is
      * valid after terminal status. */
-    if ( async->internal[0] && ( threading )->XAsyncGetStatus( async, FALSE ) == E_PENDING ) return E_INVALIDARG;
+    if ( nexus::GetAsyncStatusForIdentity( async, &privilege_identity ) == E_PENDING ) return E_INVALIDARG;
     if ( !( context = static_cast<std::remove_reference_t<decltype( context )>>( calloc( 1, sizeof( *context ) ) ) ) )
         return E_OUTOFMEMORY;
     context->refs = 1;
@@ -182,7 +183,6 @@ static HRESULT privilege_begin( IXThreadingImpl *threading, XUser *user, XUserPr
 
 static HRESULT privilege_result( IXThreadingImpl *threading, XAsyncBlock *async )
 {
-    if ( !async || async->internal[2] != reinterpret_cast<ULONG_PTR>( &privilege_identity ) ) return E_INVALIDARG;
-    return ( threading )->XAsyncGetStatus( async, FALSE );
+    return nexus::GetAsyncStatusForIdentity( async, &privilege_identity );
 }
 #endif
