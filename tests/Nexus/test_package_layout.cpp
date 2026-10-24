@@ -229,3 +229,39 @@ TEST( NexusPackageAbi, EveryVersionKeepsItsIndependentNativeEnumerationSlot )
                    static_cast<HRESULT>( slot ) );
     }
 }
+
+static void WINAPI PackageInstalledCallback( void *, const XPackageDetails * ) {}
+TEST( NexusPackageAbi, UnsupportedInstallEventsNeverClaimAWorkingSubscription )
+{
+    auto dll = LoadLibraryW( L"xgameruntime.dll" );
+    ASSERT_NE( dll, nullptr );
+    using Query = HRESULT( WINAPI * )( REFCLSID, REFIID, void ** );
+    auto query = reinterpret_cast<Query>( GetProcAddress( dll, "QueryApiImpl" ) );
+    ASSERT_NE( query, nullptr );
+    IXPackageImpl4 *package = nullptr;
+    ASSERT_EQ( query( CLSID_XPackageImpl, __uuidof( IXPackageImpl4 ), reinterpret_cast<void **>( &package ) ), S_OK );
+    XTaskQueueRegistrationToken token{ 123 };
+    EXPECT_EQ( package->XPackageRegisterPackageInstalled3( nullptr, nullptr, PackageInstalledCallback, &token ),
+               E_NOTIMPL );
+    EXPECT_EQ( token.token, 0u );
+    EXPECT_EQ( package->XPackageRegisterPackageInstalled3( nullptr, nullptr, nullptr, &token ), E_INVALIDARG );
+    package->Release();
+    FreeLibrary( dll );
+}
+TEST( NexusPackageAbi, UnknownPackageIdentifiersCannotBeReportedAsAnInstalledGame )
+{
+    auto dll = LoadLibraryW( L"xgameruntime.dll" );
+    ASSERT_NE( dll, nullptr );
+    using Query = HRESULT( WINAPI * )( REFCLSID, REFIID, void ** );
+    auto query = reinterpret_cast<Query>( GetProcAddress( dll, "QueryApiImpl" ) );
+    ASSERT_NE( query, nullptr );
+    IXPackageImpl4 *package = nullptr;
+    ASSERT_EQ( query( CLSID_XPackageImpl, __uuidof( IXPackageImpl4 ), reinterpret_cast<void **>( &package ) ), S_OK );
+    XPackageKind kind = XPackageKind::PublisherContent;
+    EXPECT_EQ( package->XPackageGetKind( "99999999999999999999999999999999", &kind ),
+               E_GAMEPACKAGE_NO_PACKAGE_IDENTIFIER );
+    EXPECT_EQ( kind, XPackageKind::PublisherContent );
+    EXPECT_EQ( package->XPackageGetKind( "not-a-package", &kind ), E_INVALIDARG );
+    package->Release();
+    FreeLibrary( dll );
+}

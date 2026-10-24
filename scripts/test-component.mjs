@@ -11,6 +11,8 @@ const probes = [
     ['nexus_system_device_id', 332], ['nexus_async-schedule', 16],
     ['nexus_async-completion-lifetime', 2805], ['nexus_taskqueue-teardown', 20],
     ['nexus_taskqueue-close', 1137], ['nexus_taskqueue-contract', 1374],
+    ['nexus_package-identity', 15], ['nexus_package-legacy', 139], ['nexus_package-chunks', 312],
+    ['nexus_package-monitors', 362], ['nexus_package-progress-bytes', 115],
     ['nexus_gamesave-sync', 283], ['nexus_gamesave-transfer', 263], ['nexus_gamesave-files', 25],
 ];
 const binaries = ['xgameruntime.dll', 'test_xgameruntime.exe', 'test_nexus_configuration.exe', 'test_nexus_timer.exe', 'test_nexus_save.exe', 'nexus_runtime-init.exe', ...probes.map(([name]) => name + '.exe')];
@@ -37,9 +39,22 @@ function execute(name, command, args, timeout = 60000) {
 }
 try {
     execute('wineboot', 'wineboot', ['--init']);
+    // Replace only an entry in this newly created prefix. Never follow Wine's
+    // default-prefix symlink back to an engine DLL or any user installation.
+    const bytes=fs.readFileSync(path.join(bin,'xgameruntime.dll'));
+    const machine=bytes.readUInt16LE(bytes.readUInt32LE(0x3c)+4);
+    if(machine!==0x8664 && machine!==0x14c)throw Error('Unsupported component PE architecture');
+    const directory=path.join(prefix,'drive_c/windows',machine===0x8664?'system32':'syswow64');
+    if(!fs.realpathSync(directory).startsWith(prefix+path.sep))throw Error('Prefix system directory escapes test root');
+    const staged=path.join(directory,'xgameruntime.dll'),temporary=staged+'.nexus-'+process.pid;
+    fs.copyFileSync(path.join(bin,'xgameruntime.dll'),temporary,fs.constants.COPYFILE_EXCL);
+    fs.renameSync(temporary,staged);
+    if(fs.lstatSync(staged).isSymbolicLink() || hash(staged)!==before['xgameruntime.dll'])throw Error('Candidate staging failed');
+    proof.staged={machine,sha256:hash(staged)};
+
     const units = execute('unit', 'wine', [path.join(bin, 'test_xgameruntime.exe')], 120000);
     const match = units.match(/\[\s*PASSED\s*\]\s+(\d+) tests/);
-    if (!match || Number(match[1]) < 51 || /\[\s*(SKIPPED|FAILED)\s*\]/.test(units))
+    if (!match || Number(match[1]) < 53 || /\[\s*(SKIPPED|FAILED)\s*\]/.test(units))
         throw Error('Missing, skipped or failed C++ unit coverage');
     proof.results.push({name: 'cpp-unit', checks: Number(match[1]), failures: 0});
     const timers = execute('timer-unit', 'wine', [path.join(bin, 'test_nexus_timer.exe')]);
@@ -62,13 +77,14 @@ try {
     }
     for (const [name, minimum] of probes) {
         const output = execute(name, 'wine', [path.join(bin, name + '.exe')]);
-        const summary = output.match(/(?:^|\n)(?:ASYNC |QUEUE )?CHECKS (\d+) FAILURES (\d+)/);
+        const summary = output.match(/(?:^|\n)(?:ASYNC |QUEUE |CHUNK METADATA )?CHECKS (\d+) FAILURES (\d+)/);
         if (!summary || Number(summary[1]) < minimum || Number(summary[2]) || /(?:^|\n)FAIL /.test(output))
             throw Error(name + ' lost required ABI coverage');
         proof.results.push({name, checks: Number(summary[1]), failures: 0});
         if(name==='nexus_gamesave-files') execute('save-child-drain','wineserver',['-w']);
     }
     if (JSON.stringify(snapshot()) !== JSON.stringify(before)) throw Error('Component binaries changed during tests');
+    if(hash(staged)!==before['xgameruntime.dll'])throw Error('Staged candidate changed');
     proof.unchanged = true;
     passed = true;
 } finally {

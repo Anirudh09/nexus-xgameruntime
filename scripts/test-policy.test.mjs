@@ -137,3 +137,19 @@ test('versioned private COM declarations must not collapse independent C++ virtu
         for(const method of value.names)assert.ok(!ancestors.has(method),name+' redeclares '+method+' and collapses its appended slot');
     }
 });
+
+test('original raw package probes remain independent and child DLL staging is prefix-local',()=>{
+    const lock=JSON.parse(read('tests/Nexus/package-contracts.lock.json'));
+    assert.equal(Object.keys(lock.originalProbes).length,5);
+    for(const [name,expected]of Object.entries(lock.originalProbes))
+        assert.equal(crypto.createHash('sha256').update(read('tests/Nexus/'+name)).digest('hex'),expected,name);
+    const x86=read('tests/Nexus/package-legacy-32-probe.c');
+    assert.equal(x86,read('tests/Nexus/package-legacy-probe.c')
+        .replace('    const char *identifier;\n    uint16_t major','    const char *identifier;\n    UINT32 versionAlignmentPadding; /* XVersion includes an 8-aligned uint64 value. */\n    uint16_t major')
+        .replace('sizeof(Details) == 80, "x64 package details ABI"','sizeof(Details) == 56, "x86 package details ABI"')
+        .replace('offsetof(Details, major) == 8 && offsetof(Details, title) == 72, "x64 package field offsets"','offsetof(Details, major) == 8 && offsetof(Details, title) == 52, "x86 package field offsets"'));
+
+    assert.match(read('scripts/test-component.mjs'),/COPYFILE_EXCL/);
+    assert.match(read('scripts/test-component.mjs'),/fs.renameSync\(temporary,staged\)/);
+    assert.match(read('scripts/test-component.mjs'),/hash\(staged\)!==before/);
+});
