@@ -14,6 +14,7 @@ const probes = [
     ['nexus_taskqueue-close', 1137], ['nexus_taskqueue-contract', 1374],
     ['nexus_package-identity', 15], ['nexus_package-legacy', 139], ['nexus_package-chunks', 312],
     ['nexus_package-content',332], ['nexus_package-monitors', 362], ['nexus_package-progress-bytes', 115],
+    ['nexus_package-selection', 750],
     ['nexus_gamesave-sync', 283], ['nexus_gamesave-transfer', 263], ['nexus_gamesave-files', 25],
 ];
 const binaries = ['xgameruntime.dll', 'test_xgameruntime.exe', 'test_nexus_configuration.exe', 'test_nexus_timer.exe', 'test_nexus_save.exe', 'test_nexus_user.exe', 'test_nexus_async_identity.exe', 'nexus_user-privilege.exe', 'nexus_auth-metadata.exe', 'nexus_store-entitlements.exe', 'nexus_runtime-init.exe', ...probes.map(([name]) => name + '.exe')];
@@ -31,8 +32,8 @@ for (const key of Object.keys(env)) {
 const proof = {schema: 1, scope: 'xgameruntime-component', completeRuntime: false,
     realGameTest: false, stableApproved: false, binaries: before, results: []};
 let passed = false;
-function execute(name, command, args, timeout = 60000, statuses = [0]) {
-    const result = spawnSync(command, args, {env, encoding: 'utf8', timeout, maxBuffer: 2 * 1024 * 1024});
+function execute(name, command, args, timeout = 60000, statuses = [0], options = {}) {
+    const result = spawnSync(command, args, {env: {...env, ...options.env}, encoding: 'utf8', timeout, maxBuffer: options.maxBuffer ?? 2 * 1024 * 1024});
     const output = (result.stdout || '') + (result.stderr || '');
     fs.writeFileSync(path.join(root, name + '.log'), output, {flag: 'wx', mode: 0o600});
     if (result.error || result.signal || !statuses.includes(result.status)) throw Error(name + ' failed; see ' + root);
@@ -86,6 +87,20 @@ try {
         if (!summary || Number(summary[1]) < minimum || Number(summary[2]) || /(?:^|\n)FAIL /.test(output))
             throw Error(name + ' lost required ABI coverage');
         proof.results.push({name, checks: Number(summary[1]), failures: 0});
+        if(name==='nexus_package-selection')
+        {
+            const setup=execute(name+'-prepare','wine',[path.join(bin,name+'.exe'),'--prepare']);
+            const fixture=setup.match(/(?:^|\n)SELECTION FIXTURE ([^\r\n]+\.exe)\r?(?:\n|$)/)?.[1];
+            if(!fixture)throw Error('Missing private selection fixture');
+            const traced={env:{WINEDEBUG:'-all,+file'},maxBuffer:16*1024*1024};
+            const selected=execute(name+'-selected-opens','wine',[fixture,'--trace-select'],60000,[0],traced);
+            const all=execute(name+'-all-opens','wine',[fixture,'--trace-all'],60000,[0],traced);
+            const reads=(text,file)=>text.split('\n').filter(line=>line.includes('trace:file:CreateFileW')&&line.includes('GENERIC_READ')&&line.toLowerCase().includes(file));
+            if(!reads(selected,'nx_selected_probe.bin').length)throw Error('Selected readability check was skipped');
+            for(const file of ['nx_unused_probe.bin','nx_voice_probe.bin','nx_common_probe.bin'])
+                if(reads(selected,file).length||!reads(all,file).length)throw Error('Selection-scoped file verification failed: '+file);
+            proof.results.push({name:'selection-file-opens',checks:7,failures:0});
+        }
         if(name==='nexus_windows-account-metadata')
         {
             const leave=execute('metadata-volatile-publication','wine',[path.join(bin,name+'.exe'),'--leave-volatile']);

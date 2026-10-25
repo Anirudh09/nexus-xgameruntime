@@ -215,7 +215,7 @@ static HRESULT chunks_record_file( struct chunk_snapshot *snapshot, UINT chunk, 
 }
 
 static HRESULT chunks_files( const WCHAR *root, xmlNodePtr chunk, struct chunk_snapshot *snapshot, UINT chunk_index,
-                             XPackageChunkAvailability *availability )
+                             XPackageChunkAvailability *availability, BOOL inspect_files )
 {
     xmlNodePtr node;
     char location[MAX_PATH], include[MAX_PATH];
@@ -228,7 +228,7 @@ static HRESULT chunks_files( const WCHAR *root, xmlNodePtr chunk, struct chunk_s
     BOOL found;
     LARGE_INTEGER size;
     HRESULT hr;
-    *availability = XPackageChunkAvailability::Ready;
+    *availability = inspect_files ? XPackageChunkAvailability::Ready : XPackageChunkAvailability::Unavailable;
     for ( node = chunk->children; node; node = node->next )
     {
         if ( node->type != XML_ELEMENT_NODE ) continue;
@@ -257,6 +257,10 @@ static HRESULT chunks_files( const WCHAR *root, xmlNodePtr chunk, struct chunk_s
         for ( p = wide; *p; p++ )
             if ( *p == '/' ) *p = '\\';
         if ( !content_join( directory, wide, pattern ) ) return HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
+        /* Validate every declaration, even outside the requested selection.
+         * Only selected chunks may contribute to a monitor's availability or
+         * byte total, so unrelated file opens cannot improve that snapshot. */
+        if ( !inspect_files ) continue;
         if ( ( find = FindFirstFileW( pattern, &data ) ) == INVALID_HANDLE_VALUE )
         {
             *availability = XPackageChunkAvailability::Unavailable;
@@ -368,19 +372,46 @@ static HRESULT chunks_features( struct chunk_snapshot *snapshot, xmlNodePtr root
     return S_OK;
 }
 
-static HRESULT chunks_load( const char *identifier, BOOL track_sizes, struct chunk_snapshot **out )
+static BOOL chunks_selected( const struct installed_chunk *chunk, UINT32 count,
+                              const XPackageChunkSelector *selectors )
+{
+    if ( !count ) return TRUE;
+    for ( UINT32 i = 0; i < count; i++ )
+    {
+        const XPackageChunkSelector *selector = &selectors[i];
+        if ( selector->type == XPackageChunkSelectorType::Chunk )
+        {
+            if ( chunk->id == selector->chunkId ) return TRUE;
+        }
+        else
+        {
+            int attribute = selector->type == XPackageChunkSelectorType::Language ? 0
+                            : selector->type == XPackageChunkSelectorType::Tag    ? 1
+                                                                                  : 2;
+            if ( !chunk->attributes[attribute] ||
+                 chunks_contains( chunk->attributes[attribute], selector->language, attribute == 0 ) )
+                return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static HRESULT chunks_load( const char *identifier, BOOL track_sizes, struct chunk_snapshot **out,
+                            UINT32 selector_count = 0, const XPackageChunkSelector *selectors = NULL )
 {
     WCHAR path[MAX_PATH], pattern[MAX_PATH], file[MAX_PATH];
     WIN32_FIND_DATAW data;
     HANDLE find;
     xmlDocPtr doc = NULL;
     xmlNodePtr root, node;
+    xmlNodePtr registration_node = NULL, chunk_nodes[CHUNKS_MAX] = { 0 };
     struct chunk_snapshot *snapshot;
     char candidate[33], id[64];
     UINT layouts = 0, i;
     BOOL registration = FALSE, layout_valid = TRUE;
     HRESULT hr;
     *out = NULL;
+    if ( selector_count > CHUNKS_MAX || ( selector_count && !selectors ) ) return E_INVALIDARG;
     if ( FAILED( hr = chunks_resolve( identifier, path ) ) ) return hr;
     if ( !( snapshot =
                 static_cast<std::remove_reference_t<decltype( snapshot )>>( calloc( 1, sizeof( *snapshot ) ) ) ) )
@@ -418,8 +449,7 @@ static HRESULT chunks_load( const char *identifier, BOOL track_sizes, struct chu
         {
             if ( registration ) goto done;
             registration = TRUE;
-            if ( FAILED( hr = chunks_files( path, node, snapshot, CHUNKS_MAX, &snapshot->registration ) ) ) goto done;
-            hr = HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
+            registration_node = node;
             continue;
         }
         if ( snapshot->count == CHUNKS_MAX )
@@ -428,17 +458,27 @@ static HRESULT chunks_load( const char *identifier, BOOL track_sizes, struct chu
             goto done;
         }
         chunk = &snapshot->chunks[snapshot->count++];
+        chunk_nodes[snapshot->count - 1] = node;
         if ( !chunks_number( id, &chunk->id ) ) goto done;
         for ( i = 0; i + 1 < snapshot->count; i++ )
             if ( snapshot->chunks[i].id == chunk->id ) goto done;
         if ( FAILED( hr = chunks_attribute( node, "Languages", &chunk->attributes[0] ) ) ||
              FAILED( hr = chunks_attribute( node, "Tags", &chunk->attributes[1] ) ) ||
-             FAILED( hr = chunks_attribute( node, "Features", &chunk->attributes[2] ) ) ||
-             FAILED( hr = chunks_files( path, node, snapshot, snapshot->count - 1, &chunk->availability ) ) )
+             FAILED( hr = chunks_attribute( node, "Features", &chunk->attributes[2] ) ) )
             goto done;
         hr = HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
     }
     if ( FAILED( hr = chunks_features( snapshot, root ) ) ) goto done;
+    /* Feature selectors can be derived from tags. Resolve all attributes
+     * before deciding which files the caller actually needs to inspect.
+     * There is no persistent snapshot: every refresh rechecks selected files. */
+    if ( registration_node && FAILED( hr = chunks_files( path, registration_node, snapshot, CHUNKS_MAX,
+                                                         &snapshot->registration, TRUE ) ) )
+        goto done;
+    for ( i = 0; i < snapshot->count; i++ )
+        if ( FAILED( hr = chunks_files( path, chunk_nodes[i], snapshot, i, &snapshot->chunks[i].availability,
+                                       chunks_selected( &snapshot->chunks[i], selector_count, selectors ) ) ) )
+            goto done;
     *out = snapshot;
     snapshot = NULL;
     hr = S_OK;

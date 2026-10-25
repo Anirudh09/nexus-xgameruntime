@@ -9,6 +9,20 @@ import {officialUbuntuMirrors} from './ci/ubuntu-mirror.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const read=name=>fs.readFileSync(path.join(root,name),'utf8');
 const contract=JSON.parse(read('tests/Nexus/contracts.lock.json'));
+test('installation selectors retain whole-layout validation and live file checks without a stale cache',()=>{
+    const chunks=read('src/System/Package/Chunks.h'),monitor=read('src/System/Package/Monitors.h');
+    assert.match(monitor,/chunks_load\( monitor->identifier, TRUE, &snapshot, monitor->count, monitor->selectors \)/);
+    assert.ok(chunks.indexOf('chunks_features( snapshot, root )')<chunks.indexOf('chunks_selected( &snapshot->chunks[i]'));
+    assert.ok(chunks.indexOf('if ( !inspect_files ) continue;')>chunks.indexOf('!content_relative( relative, FALSE )'));
+    assert.match(chunks,/&snapshot->registration, TRUE/);
+    assert.match(chunks,/inspect_files \? XPackageChunkAvailability::Ready : XPackageChunkAvailability::Unavailable/);
+    assert.match(chunks,/CreateFileW\( file, GENERIC_READ/);
+    assert.match(chunks,/GetFileSizeEx\( readable/);
+    assert.match(read('tests/CMakeLists.txt'),/package-progress-bytes package-selection/);
+    assert.match(read('scripts/test-component.mjs'),/selection-file-opens/);
+    const probe=read('tests/Nexus/package-selection-probe.c');
+    for(const label of ['selected-locked-refresh','deleted-refresh','replace-refresh','resize-refresh','invalid-refresh','concurrent-refresh','invalid-unselected-metadata-rejected'])assert.ok(probe.includes('"'+label+'"'));
+});
 test('all original raw migration assertions remain byte-identical',()=>{
     assert.equal(Object.keys(contract.probes).length,6);
     for(const [name,expected] of Object.entries(contract.probes))

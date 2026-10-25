@@ -94,7 +94,8 @@ static HRESULT installation_snapshot( struct installation_monitor *monitor, XPac
     memset( progress, 0, sizeof( *progress ) );
     /* The SDK uses UINT64_MAX, not zero, while an install total is unknown. */
     progress->totalBytes = ~( UINT64 )0;
-    if ( FAILED( hr = chunks_load( monitor->identifier, TRUE, &snapshot ) ) ) return hr;
+    if ( FAILED( hr = chunks_load( monitor->identifier, TRUE, &snapshot, monitor->count, monitor->selectors ) ) )
+        return hr;
     ready = snapshot->registration == XPackageChunkAvailability::Ready;
     if ( !monitor->count )
     {

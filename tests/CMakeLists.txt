@@ -120,7 +120,7 @@ target_link_options(nexus_gamesave-files PRIVATE -static -static-libgcc -static-
 set_target_properties(nexus_gamesave-files PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 if(NEXUS_MIGRATION_PROBES)
-    foreach(probe package-identity package-legacy package-chunks package-monitors package-progress-bytes)
+    foreach(probe package-identity package-legacy package-chunks package-monitors package-progress-bytes package-selection)
         set(package_probe_source "Nexus/${probe}-probe.c")
         if(probe STREQUAL "package-legacy" AND CMAKE_SIZEOF_VOID_P EQUAL 4)
             set(package_probe_source "Nexus/package-legacy-32-probe.c")
