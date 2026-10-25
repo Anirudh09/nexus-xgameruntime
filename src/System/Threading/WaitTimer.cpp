@@ -40,7 +40,18 @@ namespace OS
             m_context = context;
             m_callback = callback;
 
-            m_timer = CreateThreadpoolTimer(WaitCallback, this, nullptr);
+            // The native timer keeps its callback's module loaded, including
+            // a callback already queued when the public monitor is closed.
+            HMODULE module;
+            TP_CALLBACK_ENVIRON environment;
+            if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                    reinterpret_cast<LPCWSTR>(WaitCallback), &module))
+                return HRESULT_FROM_WIN32(GetLastError());
+            InitializeThreadpoolEnvironment(&environment);
+            SetThreadpoolCallbackLibrary(&environment, module);
+            m_timer = CreateThreadpoolTimer(WaitCallback, this, &environment);
+            DestroyThreadpoolEnvironment(&environment);
             RETURN_LAST_ERROR_IF_NULL(m_timer);
 
             return S_OK;

@@ -79,6 +79,25 @@ TEST( NexusConfiguration, DerivesRealPackageFamilyWithoutIdentitySubstitution )
     for ( auto name : { "", "..", "../elsewhere", "C:\\elsewhere", "directory/file", "a:b" } )
         EXPECT_TRUE( FAILED( nexus::GetPackageFamilyName( name, "CN=Publisher", result ) ) );
 }
+TEST( NexusConfiguration, LegacyFullTrustUsesOnlyExplicitSchemaZeroWithoutTitleClientSubstitution )
+{
+    nexus::GameConfiguration config;
+    config.fullTrust = true;
+    for ( auto schema : { "", "1", "2", "00", "0suffix", "-1" } )
+    {
+        config.game.attributes = { { "configVersion", schema } };
+        EXPECT_FALSE( nexus::UsesLegacyFullTrust( config ) );
+    }
+    config.game.attributes = { { "configVersion", "0" } };
+    EXPECT_TRUE( nexus::UsesLegacyFullTrust( config ) );
+    EXPECT_TRUE( config.msaAppId.empty() );
+    config.fullTrust = false;
+    EXPECT_FALSE( nexus::UsesLegacyFullTrust( config ) );
+    config.fullTrust = true;
+    config.msaAppId = "actual-explicit-client";
+    EXPECT_FALSE( nexus::UsesLegacyFullTrust( config ) );
+    EXPECT_EQ( config.msaAppId, "actual-explicit-client" );
+}
 TEST( NexusConfiguration, FailedInitializationIsRetryableThenPublishesAtomically )
 {
     ASSERT_EQ( nexus::GetGameConfiguration(), nullptr );

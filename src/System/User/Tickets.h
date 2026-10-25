@@ -17,7 +17,12 @@ static HRESULT get_rps_tickets( XUser *owner, BOOLEAN allowUi, char **userTicket
     int bodySize;
     HRESULT hr;
 
-    if ( !GetMsaAppId() && GetFullTrust() ) return E_GAME_MISSING_GAME_CONFIG;
+    /* Schema 0 permits an absent MSAAppId, including full-trust titles.
+     * Use the existing platform account request in that case, not a guessed
+     * title client id. Keep the declared full-trust scope and all real server
+     * authentication results. This does not grant a title token or ownership.
+     * An incomplete newer/unknown full-trust configuration still fails. */
+    if ( !GetMsaAppId() && GetFullTrust() && !GetLegacyFullTrust() ) return E_GAME_MISSING_GAME_CONFIG;
 
     if ( !( doc = xmlNewDoc( BAD_CAST "1.0" ) ) ) return E_OUTOFMEMORY;
     root = xmlNewNode( NULL, BAD_CAST "MSATokenRequest" );

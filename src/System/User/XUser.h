@@ -73,6 +73,7 @@ public:
     HRESULT WINAPI Initialize( const XUserAddOptions options );
     HRESULT WINAPI GetEndpointInfo( const char *url, struct endpoint *info );
     HRESULT WINAPI GetAuthorization( const WCHAR *relyingParty, WCHAR **auth );
+    HRESULT GetPresenceAuthorization( const char *url, char **auth, UINT32 *signatureVersion );
     HRESULT WINAPI GetSignature( UINT32 version, const char *method, const char *url, const char *auth, UINT32 bodySize,
                                  const void *body, char signature[104] );
 };

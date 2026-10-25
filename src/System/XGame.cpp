@@ -38,11 +38,53 @@ HRESULT WINAPI XGameImpl::XGameGetXboxTitleId( UINT32 *out )
     return S_OK;
 }
 
+static void TraceLaunchPath( const WCHAR *executable ) noexcept
+{
+    const DWORD saved = GetLastError();
+    char enabled[2];
+    if ( GetEnvironmentVariableA( "NEXUS_LAUNCH_TRACE", enabled, sizeof( enabled ) ) == 1 && enabled[0] == '1' )
+    {
+        WCHAR directory[32768];
+        const DWORD length = GetCurrentDirectoryW( ARRAY_SIZE( directory ), directory );
+        if ( !length || length >= ARRAY_SIZE( directory ) ) directory[0] = 0;
+        /* Deliberately exclude arguments, environment values and account data.
+         * Paths are bounded diagnostic text, never a launch fallback policy. */
+        INFO( "NEXUS_LAUNCH_META target=%.512ls cwd=%.512ls attributes=%08lx\n", executable, directory,
+              GetFileAttributesW( executable ) );
+    }
+    SetLastError( saved );
+}
+
+static WCHAR *FindSiblingExecutable( const WCHAR *name ) noexcept
+{
+    /* A leaf name can also identify an executable beside the caller, as in
+     * Windows process launch resolution. Never reinterpret an explicit path,
+     * search PATH, change CWD or guess a different package root. */
+    if ( wcspbrk( name, L"\\/:" ) || !wcscmp( name, L"." ) || !wcscmp( name, L".." ) ) return nullptr;
+    auto *path = static_cast<WCHAR *>( malloc( 32768 * sizeof( WCHAR ) ) );
+    if ( !path ) return nullptr;
+    const DWORD length = GetModuleFileNameW( nullptr, path, 32768 );
+    WCHAR *slash = length && length < 32768 ? wcsrchr( path, '\\' ) : nullptr;
+    if ( !slash || static_cast<SIZE_T>( slash - path ) + 1 + wcslen( name ) >= 32768 )
+    {
+        free( path );
+        return nullptr;
+    }
+    wcscpy( slash + 1, name );
+    const DWORD attributes = GetFileAttributesW( path );
+    if ( attributes == INVALID_FILE_ATTRIBUTES || ( attributes & FILE_ATTRIBUTE_DIRECTORY ) )
+    {
+        free( path );
+        return nullptr;
+    }
+    return path;
+}
+
 void WINAPI XGameImpl::XLaunchNewGame( const char *exePath, const char *args, XUserHandle defaultUser )
 {
     STARTUPINFOW startup = { sizeof( startup ) };
     PROCESS_INFORMATION process;
-    WCHAR *executable = NULL, *arguments = NULL, *command = NULL;
+    WCHAR *executable = NULL, *arguments = NULL, *command = NULL, *sibling = NULL;
     SIZE_T length;
     int exe_count, args_count = 1;
     DWORD error = ERROR_INVALID_PARAMETER;
@@ -86,15 +128,23 @@ void WINAPI XGameImpl::XLaunchNewGame( const char *exePath, const char *args, XU
     /* No shell or new authentication flow. Keep the current directory and
      * environment (package view, account bridge and runtime) in the new tree,
      * but do not leak the caller's unrelated inheritable Windows handles. */
+    TraceLaunchPath( executable );
     if ( !CreateProcessW( executable, command, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &process ) )
     {
         error = GetLastError();
-        goto done;
+        if ( error != ERROR_FILE_NOT_FOUND || !( sibling = FindSiblingExecutable( executable ) ) ) goto done;
+        TraceLaunchPath( sibling );
+        if ( !CreateProcessW( sibling, command, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &process ) )
+        {
+            error = GetLastError();
+            goto done;
+        }
     }
     CloseHandle( process.hThread );
     CloseHandle( process.hProcess );
     error = ERROR_SUCCESS;
 done:
+    free( sibling );
     free( command );
     free( arguments );
     free( executable );

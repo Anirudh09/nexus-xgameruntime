@@ -40,6 +40,7 @@
 #include "System/PersistentStorage.h"
 #include "Runtime/Configuration.h"
 #include "Runtime/Shutdown.h"
+#include "System/User/Presence.h"
 #include <xpersistentlocalstorage.h>
 #include "Runtime/StoreDiagnostics.h"
 
@@ -79,7 +80,9 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, void *reserved )
 HRESULT WINAPI InitializeApiImplEx2( ULONG gdkVer, ULONG gsVer, char mode, const INITIALIZE_OPTIONS *options )
 {
     TRACE( "gdkVer %ld, gsVer %ld, mode %d, options %p.\n", gdkVer, gsVer, mode, options );
-    return nexus::InitializeGameConfiguration(options);
+    const HRESULT hr = nexus::InitializeGameConfiguration(options);
+    NEXUS_STORE_META( 1, hr, 0, nullptr );
+    return hr;
 }
 
 HRESULT WINAPI InitializeApiImplEx( ULONG gdkVer, ULONG gsVer, char mode )
@@ -146,7 +149,11 @@ HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
     if ( IsEqualGUID( clsid, CLSID_XGameProtocolImpl ) )
         return GetGameProtocolInterface()->QueryInterface( iid, out );
     if ( IsEqualGUID( clsid, CLSID_XGameStreamingImpl ) )
-        return GetGameStreamingInterface()->QueryInterface( iid, out );
+    {
+        const HRESULT hr = GetGameStreamingInterface()->QueryInterface( iid, out );
+        NEXUS_STORE_META( 2, hr, 0, &iid );
+        return hr;
+    }
     if ( IsEqualGUID( clsid, CLSID_XGameUiImpl ) )
         return GetGameUiInterface()->QueryInterface( iid, out );
     if ( IsEqualGUID( clsid, CLSID_XGameRuntimeFeatureImpl ) )
@@ -185,6 +192,7 @@ HRESULT WINAPI NexusRegisterCloudShutdown(nexus::CloudShutdownCallback callback,
 
 HRESULT WINAPI UninitializeApiImpl()
 {
+    nexus::presence::Stop();
     return nexus::DrainCloudShutdown();
 }
 

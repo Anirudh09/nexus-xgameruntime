@@ -20,6 +20,7 @@
  */
 
 #include "XGameRuntimeFeature.h"
+#include "GameInvite/Bridge.h"
 
 BOOLEAN WINAPI XGameRuntimeFeatureImpl::XGameRuntimeIsFeatureAvailable( XGameRuntimeFeature feature )
 {
@@ -27,6 +28,8 @@ BOOLEAN WINAPI XGameRuntimeFeatureImpl::XGameRuntimeIsFeatureAvailable( XGameRun
     // object. Individual operations can still fail for normal runtime reasons.
     switch ( feature )
     {
+    case XGameRuntimeFeature::XGameInvite:
+        return nexus::invites::BridgeAvailable();
     case XGameRuntimeFeature::XAsync:
     case XGameRuntimeFeature::XAsyncProvider:
     case XGameRuntimeFeature::XGame:

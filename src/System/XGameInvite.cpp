@@ -20,6 +20,7 @@
  */
 
 #include "XGameInvite.h"
+#include "GameInvite/Events.h"
 
 HRESULT WINAPI XGameInviteImpl::XGameInviteRegisterForEvent( XTaskQueueHandle queue, void *context,
                                                              XGameInviteEventCallback *callback,
@@ -29,13 +30,13 @@ HRESULT WINAPI XGameInviteImpl::XGameInviteRegisterForEvent( XTaskQueueHandle qu
 
     if ( token ) token->token = 0;
     if ( !callback || !token ) return E_INVALIDARG;
-    return E_NOTIMPL;
+    return nexus::invites::GetEvents().Register( nexus::invites::EventKind::Accepted, queue, context, { callback, nullptr, nullptr }, token );
 }
 
 BOOLEAN WINAPI XGameInviteImpl::XGameInviteUnregisterForEvent( XTaskQueueRegistrationToken token, BOOLEAN wait )
 {
     ( void )0;
-    return FALSE;
+    return nexus::invites::GetEvents().Unregister( nexus::invites::EventKind::Accepted, token, wait );
 }
 
 HRESULT WINAPI XGameInviteImpl::XGameInviteRegisterForPendingEvent( XTaskQueueHandle queue, void *context,
@@ -46,19 +47,19 @@ HRESULT WINAPI XGameInviteImpl::XGameInviteRegisterForPendingEvent( XTaskQueueHa
 
     if ( token ) token->token = 0;
     if ( !callback || !token ) return E_INVALIDARG;
-    return E_NOTIMPL;
+    return nexus::invites::GetEvents().Register( nexus::invites::EventKind::Pending, queue, context, { callback, nullptr, nullptr }, token );
 }
 
 BOOLEAN WINAPI XGameInviteImpl::XGameInviteUnregisterForPendingEvent( XTaskQueueRegistrationToken token, BOOLEAN wait )
 {
     ( void )0;
-    return FALSE;
+    return nexus::invites::GetEvents().Unregister( nexus::invites::EventKind::Pending, token, wait );
 }
 
 HRESULT WINAPI XGameInviteImpl::XGameInviteAcceptPendingInvite( const char *inviteUri )
 {
     ( void )0;
-    return E_NOTIMPL;
+    return nexus::invites::Accept( inviteUri );
 }
 
 IUnknown *GetGameInviteInterface() noexcept

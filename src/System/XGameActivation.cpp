@@ -20,6 +20,7 @@
  */
 
 #include "XGameActivation.h"
+#include "GameInvite/Events.h"
 
 HRESULT WINAPI XGameActivationImpl::XGameActivationRegisterForEvent( XTaskQueueHandle queue, void *context,
                                                                      XGameActivationCallback *callback,
@@ -29,19 +30,19 @@ HRESULT WINAPI XGameActivationImpl::XGameActivationRegisterForEvent( XTaskQueueH
 
     if ( token ) token->token = 0;
     if ( !callback || !token ) return E_INVALIDARG;
-    return E_NOTIMPL;
+    return nexus::invites::GetEvents().Register( nexus::invites::EventKind::Activation, queue, context, { nullptr, callback, nullptr }, token );
 }
 
 BOOLEAN WINAPI XGameActivationImpl::XGameActivationUnregisterForEvent( XTaskQueueRegistrationToken token, BOOLEAN wait )
 {
     ( void )0;
-    return FALSE;
+    return nexus::invites::GetEvents().Unregister( nexus::invites::EventKind::Activation, token, wait );
 }
 
 HRESULT WINAPI XGameActivationImpl::XGameActivationAcceptPendingInvite( const char *inviteUri )
 {
     ( void )0;
-    return E_NOTIMPL;
+    return nexus::invites::Accept( inviteUri );
 }
 
 IUnknown *GetGameActivationInterface() noexcept
