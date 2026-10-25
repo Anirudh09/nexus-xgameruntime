@@ -23,7 +23,7 @@
 
 HRESULT WINAPI XGameStreamingImpl::XGameStreamingInitialize()
 {
-    ( void )0;
+    NEXUS_STORE_META( 3, E_NOTIMPL, 0, nullptr );
     return E_NOTIMPL;
 }
 
