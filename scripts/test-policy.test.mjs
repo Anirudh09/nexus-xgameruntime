@@ -23,6 +23,18 @@ test('installation selectors retain whole-layout validation and live file checks
     const probe=read('tests/Nexus/package-selection-probe.c');
     for(const label of ['selected-locked-refresh','deleted-refresh','replace-refresh','resize-refresh','invalid-refresh','concurrent-refresh','invalid-unselected-metadata-rejected'])assert.ok(probe.includes('"'+label+'"'));
 });
+test('incomplete hints reorder live checks only after validating all declarations',()=>{
+    const source=read('src/System/Package/Chunks.h'),monitor=read('src/System/Package/Monitors.h');
+    assert.ok(source.indexOf('chunks_inspect_files( snapshot )')>source.lastIndexOf('chunks_files( path, chunk_nodes[i]'));
+    assert.match(source,/wcsicmp\( hint, snapshot->file_groups\[i\]\.pattern \)/);
+    assert.match(source,/chunks_inspect_group\( snapshot, index \)/);
+    assert.match(monitor,/if \( delay > 5000 \) delay = 5000/);
+    assert.match(monitor,/monitor->unchanged = 0/);
+    assert.match(monitor,/monitor->unchanged < 3/);
+    assert.match(read('scripts/test-component.mjs'),/repeated-incomplete-file-opens/);
+    for(const label of ['unchanged-missing-refresh','restoration-rechecks-other-files','missing-hint-does-not-hide-invalid-layout','changed-layout-drops-old-blocker'])
+        assert.ok(read('tests/Nexus/package-selection-probe.c').includes('"'+label+'"'));
+});
 test('all original raw migration assertions remain byte-identical',()=>{
     assert.equal(Object.keys(contract.probes).length,6);
     for(const [name,expected] of Object.entries(contract.probes))

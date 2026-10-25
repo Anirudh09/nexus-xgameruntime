@@ -100,6 +100,15 @@ try {
             for(const file of ['nx_unused_probe.bin','nx_voice_probe.bin','nx_common_probe.bin'])
                 if(reads(selected,file).length||!reads(all,file).length)throw Error('Selection-scoped file verification failed: '+file);
             proof.results.push({name:'selection-file-opens',checks:7,failures:0});
+            const repeat=execute(name+'-repeat-missing','wine',[fixture,'--trace-repeat'],60000,[0],traced);
+            const bounded=repeat.split('NEXUS_REPEAT_PROBE_BEGIN')[1]?.split('NEXUS_REPEAT_PROBE_END')[0];
+            if(!bounded||!/CHECKS \d+ FAILURES 0/.test(repeat))throw Error('Missing repeated-incomplete contract');
+            for(const file of ['nx_selected_probe.bin','nx_voice_probe.bin','nx_common_probe.bin'])
+                if(reads(bounded,file).length)throw Error('Repeated missing-state check rescans readable content: '+file);
+            if(!bounded.toLowerCase().includes('nx_common_probe.bin'))throw Error('Missing blocker was not actually rechecked');
+            if(!reads(repeat.split('NEXUS_REPEAT_PROBE_END')[1]??'','nx_selected_probe.bin').length)
+                throw Error('Restoring the blocker skipped the full readability check');
+            proof.results.push({name:'repeated-incomplete-file-opens',checks:6,failures:0});
         }
         if(name==='nexus_windows-account-metadata')
         {
