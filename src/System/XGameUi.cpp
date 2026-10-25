@@ -46,13 +46,13 @@ HRESULT WINAPI XGameUiImpl::XGameUiShowSendGameInviteAsync( XAsyncBlock *async, 
                                                             const char *customActivationContext )
 {
     ( void )0;
-    return nexus::invites::ShowInvite( async, requestingUser, sessionConfigurationId, sessionTemplateName, sessionId, invitationText, customActivationContext );
+    return nexus::invites::BridgeAvailable() ? nexus::invites::ShowInvite( async, requestingUser, sessionConfigurationId, sessionTemplateName, sessionId, invitationText, customActivationContext ) : E_NOTIMPL;
 }
 
 HRESULT WINAPI XGameUiImpl::XGameUiShowSendGameInviteResult( XAsyncBlock *async )
 {
     ( void )0;
-    return nexus::invites::ShowInviteResult( async );
+    return nexus::invites::BridgeAvailable() ? nexus::invites::ShowInviteResult( async ) : E_NOTIMPL;
 }
 
 HRESULT WINAPI XGameUiImpl::XGameUiShowPlayerProfileCardAsync( XAsyncBlock *async, XUserHandle requestingUser,
@@ -208,13 +208,13 @@ HRESULT WINAPI XGameUiImpl::XGameUiShowMultiplayerActivityGameInviteAsync( XAsyn
                                                                            XUserHandle requestingUser )
 {
     ( void )0;
-    return nexus::invites::ShowActivityInvite( async, requestingUser );
+    return nexus::invites::BridgeAvailable() ? nexus::invites::ShowActivityInvite( async, requestingUser ) : E_NOTIMPL;
 }
 
 HRESULT WINAPI XGameUiImpl::XGameUiShowMultiplayerActivityGameInviteResult( XAsyncBlock *async )
 {
     ( void )0;
-    return nexus::invites::ShowActivityInviteResult( async );
+    return nexus::invites::BridgeAvailable() ? nexus::invites::ShowActivityInviteResult( async ) : E_NOTIMPL;
 }
 
 HRESULT WINAPI XGameUiImpl::__PADDING_7__()
