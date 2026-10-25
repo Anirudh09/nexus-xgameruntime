@@ -40,6 +40,7 @@
 #include "System/PersistentStorage.h"
 #include "Runtime/Configuration.h"
 #include "Runtime/Shutdown.h"
+#include "System/User/Presence.h"
 #include <xpersistentlocalstorage.h>
 #include "Runtime/StoreDiagnostics.h"
 
@@ -185,6 +186,7 @@ HRESULT WINAPI NexusRegisterCloudShutdown(nexus::CloudShutdownCallback callback,
 
 HRESULT WINAPI UninitializeApiImpl()
 {
+    nexus::presence::Stop();
     return nexus::DrainCloudShutdown();
 }
 

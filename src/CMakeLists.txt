@@ -32,6 +32,7 @@ target_sources(xgameruntime-impl PRIVATE
         System/XPackage.cpp
         System/XGameSave.cpp
         System/XUser.cpp
+        System/User/Presence.cpp
         HttpClient.cpp
         System/XThreading.cpp
         System/XSystem.cpp

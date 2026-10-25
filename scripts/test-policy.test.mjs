@@ -9,6 +9,17 @@ import {officialUbuntuMirrors} from './ci/ubuntu-mirror.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const read=name=>fs.readFileSync(path.join(root,name),'utf8');
 const contract=JSON.parse(read('tests/Nexus/contracts.lock.json'));
+test('title presence is optional, genuine-claim-bound and supported by its launcher before requesting tokens',()=>{
+    const source=read('src/System/User/Presence.cpp'),user=read('src/System/XUser.cpp');
+    assert.ok(source.indexOf('"presence-ready"')<source.indexOf('const auto hr = Prepare('));
+    assert.match(source,/generation == worker->generation && xuser_is_current_user\( worker->user \)/);
+    assert.match(source,/SecureZeroMemory/);assert.match(source,/FreeLibraryAndExitThread/);
+    assert.match(user,/SUCCEEDED\( hr \) && \*newUser \) nexus::presence::Start/);
+    assert.match(user,/presence && \( !title \|\| !user->titleToken/);
+    assert.match(user,/actual != user->xuid/);
+    assert.ok(source.includes('\\"state\\":\\"active\\"'));
+    for(const value of ['UsesGenuineTitleDeviceAndMatchingUserAndSignsOnlyCurrentTitle','MissingTitleTokenNeverFallsBackToOrdinaryUserAuthorization','WrongMalformedOrMissingAuthenticatedIdentityNeverPublishes','MissingEndpointOrUnsupportedPolicyFailsClosedWithoutBreakingLogin','DenialCancelledAndInvalidInputsHaveNoPresenceSideEffects'])assert.ok(read('scripts/test-authentication.mjs').includes(value));
+});
 test('installation selectors retain whole-layout validation and live file checks without a stale cache',()=>{
     const chunks=read('src/System/Package/Chunks.h'),monitor=read('src/System/Package/Monitors.h');
     assert.match(monitor,/chunks_load\( monitor->identifier, TRUE, &snapshot, monitor->count, monitor->selectors \)/);

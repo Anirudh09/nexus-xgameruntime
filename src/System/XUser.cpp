@@ -20,6 +20,7 @@
  */
 
 #include "User/XUserImpl.h"
+#include "User/Presence.h"
 #include "../Runtime/Configuration.h"
 #include <afunix.h>
 #include <libxml/parser.h>
@@ -573,7 +574,7 @@ cleanup:
 
 static HRESULT xsts_authorize( XUserHandle user, const char *relyingParty, BOOL title, char **auth );
 static HRESULT xsts_authorize_privilege( XUserHandle user, const char *relyingParty, BOOL title, char **auth,
-                                         XUserPrivilege privilege, BOOLEAN *granted );
+                                         XUserPrivilege privilege, BOOLEAN *granted, bool presence = false );
 static char *hstring_to_utf8( HSTRING string );
 static WCHAR *utf8_to_wide( const char *string );
 
@@ -1584,6 +1585,7 @@ HRESULT WINAPI XUserImpl::XUserAddResult( XAsyncBlock *async, XUserHandle *newUs
                  ? threading->XAsyncGetResult( async, &UserAddIdentity, sizeof( *newUser ), newUser, nullptr )
                  : E_INVALIDARG;
     threading->Release();
+    if ( SUCCEEDED( hr ) && *newUser ) nexus::presence::Start( *newUser );
     return hr;
 }
 
@@ -2972,7 +2974,7 @@ static HRESULT xsts_authorize( XUserHandle user, const char *relyingParty, BOOL 
 }
 
 static HRESULT xsts_authorize_privilege( XUserHandle user, const char *relyingParty, BOOL title, char **auth,
-                                         XUserPrivilege privilege, BOOLEAN *granted )
+                                         XUserPrivilege privilege, BOOLEAN *granted, bool presence )
 {
     static const char url[] = "https://xsts.auth.xboxlive.com/xsts/authorize";
     IJsonObject *object = NULL, *claims = NULL, *identity = NULL;
@@ -2987,6 +2989,7 @@ static HRESULT xsts_authorize_privilege( XUserHandle user, const char *relyingPa
 
     auth_metadata( "xsts-begin", user, E_PENDING, 0, requested_title, FALSE );
     if ( granted ) *granted = FALSE;
+    if ( presence && ( !title || !user->titleToken || !*user->titleToken || !user->xuid ) ) return E_GAMEUSER_NO_AUTH_USER;
 
     if ( !user->deviceToken || !user->userToken || !user->proofKey )
     {
@@ -3026,6 +3029,20 @@ static HRESULT xsts_authorize_privilege( XUserHandle user, const char *relyingPa
     if ( FAILED( hr = get_json_array( claims, L"xui", &xui ) ) ) goto cleanup;
     if ( FAILED( hr = ( xui )->GetObjectAt( 0, &identity ) ) ) goto cleanup;
     if ( FAILED( hr = get_json_string( identity, L"uhs", &uhs ) ) ) goto cleanup;
+    if ( presence )
+    {
+        UINT32 count = 0; UINT64 actual = 0;
+        if ( FAILED( hr = get_json_string( identity, L"xid", &xid ) ) ) goto cleanup;
+        const auto text = WindowsGetStringRawBuffer( xid, &count );
+        if ( !count || count > 20 ) { hr = E_GAMEUSER_NO_AUTH_USER; goto cleanup; }
+        for ( UINT32 i = 0; i < count; ++i )
+        {
+            if ( text[i] < '0' || text[i] > '9' || actual > ( ~UINT64( 0 ) - ( text[i] - '0' ) ) / 10 )
+            { hr = E_GAMEUSER_NO_AUTH_USER; goto cleanup; }
+            actual = actual * 10 + text[i] - '0';
+        }
+        if ( actual != user->xuid ) { hr = E_GAMEUSER_NO_AUTH_USER; goto cleanup; }
+    }
     if ( granted )
     {
         const WCHAR *xid_text, *prv_text;
@@ -3073,6 +3090,31 @@ cleanup:
     if ( SUCCEEDED( comInit ) ) CoUninitialize();
     auth_metadata( "xsts", user, hr, status, requested_title, title );
     return hr;
+}
+
+HRESULT XUser::GetPresenceAuthorization( const char *url, char **auth, UINT32 *signatureVersion )
+{
+    if ( !auth || !signatureVersion ) return E_POINTER;
+    *auth = nullptr; *signatureVersion = 0;
+    if ( !url || !titleToken || !*titleToken || !xuid || cancelled ) return E_GAMEUSER_NO_AUTH_USER;
+    try
+    {
+        const auto expected = "https://userpresence.xboxlive.com/users/xuid(" + std::to_string( xuid ) + ")/devices/current/titles/current";
+        if ( expected != url ) return E_ACCESSDENIED;
+        endpoint info{};
+        auto hr = GetEndpointInfo( url, &info );
+        if ( FAILED( hr ) ) return hr;
+        if ( !info.policy || info.policy->version != 1 || info.policy->maxBodyBytes < 18 ||
+             !info.relyingParty || !info.tokenType ||
+             wcscmp( WindowsGetStringRawBuffer( info.tokenType, nullptr ), L"JWT" ) ) return E_NOTIMPL;
+        char *audience = hstring_to_utf8( info.relyingParty );
+        if ( !audience ) return E_OUTOFMEMORY;
+        hr = xsts_authorize_privilege( this, audience, TRUE, auth, static_cast<XUserPrivilege>( 0 ), nullptr, true );
+        free( audience );
+        if ( SUCCEEDED( hr ) ) *signatureVersion = info.policy->version;
+        return hr;
+    }
+    catch ( ... ) { return E_OUTOFMEMORY; }
 }
 
 HRESULT xuser_device_authorization( XUserHandle user, const char *relyingParty, char **auth )

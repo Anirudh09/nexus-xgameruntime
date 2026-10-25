@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include <gtest/gtest.h>
 #include "../../src/System/User/XUserImpl.h"
+#include "../../src/System/User/Presence.h"
 #include <wincrypt.h>
 #include <string>
 #include <vector>
@@ -177,6 +178,89 @@ User CreateUser( UserTransport &transport )
 }
 }
 
+static std::string PresenceEndpoints()
+{
+    return R"({"SignaturePolicies":[{"Version":1,"MaxBodyBytes":8192}],"EndPoints":[{"Protocol":"https","Host":"userpresence.xboxlive.com","RelyingParty":"http://xboxlive.com","TokenType":"JWT","SignaturePolicyIndex":0}]})";
+}
+TEST( NexusPresence, UsesGenuineTitleDeviceAndMatchingUserAndSignsOnlyCurrentTitle )
+{
+    Apartment apartment; SyntheticTransport transport; transport.currentEndpoints = PresenceEndpoints();
+    auto user = CreateUser( transport );
+    ASSERT_EQ( user->InitializeNetwork( XUserAddOptions::AddDefaultUserSilently ), S_OK );
+    user->initDone = 1; user->initResult = S_OK;
+    std::vector<std::string> fields;
+    ASSERT_EQ( nexus::presence::Prepare( user.get(), 123, fields ), S_OK );
+    ASSERT_EQ( fields.size(), 6u );
+    EXPECT_EQ( fields[0], "presence" ); EXPECT_EQ( fields[1], transport.xid ); EXPECT_EQ( fields[2], "123" );
+    EXPECT_EQ( fields[3], "XBL3.0 x=synthetic-user-hash;synthetic-xsts" );
+    ASSERT_EQ( transport.signedBodies.size(), 1u );
+    for ( const auto field : { "\"TitleToken\":\"synthetic-title-token\"", "\"DeviceToken\":\"synthetic-device-token\"", "\"UserTokens\":[\"synthetic-user-token\"]", "\"RelyingParty\":\"http://xboxlive.com\"", "\"SandboxId\":\"RETAIL\"" } )
+        EXPECT_NE( transport.signedBodies[0].find( field ), std::string::npos );
+    for ( unsigned index : { 4u, 5u } )
+    {
+        const char *method = index == 4 ? "POST" : "DELETE", *body = index == 4 ? "{\"state\":\"active\"}" : "";
+        BYTE decoded[76]; DWORD size = sizeof( decoded );
+        ASSERT_TRUE( CryptStringToBinaryA( fields[index].data(), fields[index].size(), CRYPT_STRING_BASE64, decoded, &size, nullptr, nullptr ) );
+        ASSERT_EQ( size, 76u );
+        std::vector<BYTE> payload( decoded, decoded + 4 ); payload.push_back( 0 );
+        payload.insert( payload.end(), decoded + 4, decoded + 12 ); payload.push_back( 0 );
+        const auto route = "/users/xuid(" + transport.xid + ")/devices/current/titles/current";
+        for ( const auto &text : { std::string( method ), route, fields[3], std::string( body ) } )
+        { payload.insert( payload.end(), text.begin(), text.end() ); payload.push_back( 0 ); }
+        BYTE digest[32]; ASSERT_EQ( HashForVerification( payload.data(), payload.size(), digest ), 0 );
+        EXPECT_EQ( BCryptVerifySignature( user->key, nullptr, digest, sizeof( digest ), decoded + 12, 64, 0 ), 0 );
+        payload.back() = 'x'; ASSERT_EQ( HashForVerification( payload.data(), payload.size(), digest ), 0 );
+        EXPECT_NE( BCryptVerifySignature( user->key, nullptr, digest, sizeof( digest ), decoded + 12, 64, 0 ), 0 );
+    }
+    EXPECT_EQ( transport.unexpected, 0u );
+}
+TEST( NexusPresence, MissingTitleTokenNeverFallsBackToOrdinaryUserAuthorization )
+{
+    Apartment apartment; SyntheticTransport transport; transport.titleToken = false; transport.currentEndpoints = PresenceEndpoints();
+    auto user = CreateUser( transport ); ASSERT_EQ( user->InitializeNetwork( XUserAddOptions::AddDefaultUserSilently ), S_OK );
+    user->initDone = 1; user->initResult = S_OK;
+    std::vector<std::string> fields{ "must-clear" };
+    EXPECT_TRUE( FAILED( nexus::presence::Prepare( user.get(), 123, fields ) ) );
+    EXPECT_TRUE( fields.empty() ); EXPECT_EQ( transport.rawCalls, 0u );
+    EXPECT_STREQ( user->userToken, "synthetic-user-token" ); EXPECT_EQ( user->initResult, S_OK );
+}
+TEST( NexusPresence, WrongMalformedOrMissingAuthenticatedIdentityNeverPublishes )
+{
+    Apartment apartment;
+    for ( const auto identity : { "", "0", "43", "-1", "18446744073709551616", "1234567890123456\\u0000" } )
+    {
+        SyntheticTransport transport; transport.currentEndpoints = PresenceEndpoints(); transport.claimXid = identity;
+        auto user = CreateUser( transport ); ASSERT_EQ( user->InitializeNetwork( XUserAddOptions::AddDefaultUserSilently ), S_OK );
+        user->initDone = 1; user->initResult = S_OK;
+        std::vector<std::string> fields{ "must-clear" };
+        EXPECT_TRUE( FAILED( nexus::presence::Prepare( user.get(), 123, fields ) ) ); EXPECT_TRUE( fields.empty() );
+        EXPECT_EQ( user->initResult, S_OK ); EXPECT_STREQ( user->userToken, "synthetic-user-token" );
+    }
+}
+TEST( NexusPresence, MissingEndpointOrUnsupportedPolicyFailsClosedWithoutBreakingLogin )
+{
+    Apartment apartment;
+    for ( const auto metadata : { SyntheticTransport::Endpoints(), std::string( R"({"EndPoints":[{"Protocol":"https","Host":"userpresence.xboxlive.com","RelyingParty":"http://xboxlive.com","TokenType":"JWT"}]})" ) } )
+    {
+        SyntheticTransport transport; transport.currentEndpoints = metadata;
+        auto user = CreateUser( transport ); ASSERT_EQ( user->InitializeNetwork( XUserAddOptions::AddDefaultUserSilently ), S_OK );
+        user->initDone = 1; user->initResult = S_OK;
+        std::vector<std::string> fields; EXPECT_TRUE( FAILED( nexus::presence::Prepare( user.get(), 123, fields ) ) );
+        EXPECT_TRUE( fields.empty() ); EXPECT_EQ( transport.rawCalls, 0u ); EXPECT_EQ( user->initResult, S_OK );
+    }
+}
+TEST( NexusPresence, DenialCancelledAndInvalidInputsHaveNoPresenceSideEffects )
+{
+    Apartment apartment; SyntheticTransport transport; transport.currentEndpoints = PresenceEndpoints(); transport.xstsStatus = 403;
+    auto user = CreateUser( transport ); ASSERT_EQ( user->InitializeNetwork( XUserAddOptions::AddDefaultUserSilently ), S_OK );
+    user->initDone = 1; user->initResult = S_OK;
+    std::vector<std::string> fields;
+    EXPECT_TRUE( FAILED( nexus::presence::Prepare( user.get(), 123, fields ) ) ); EXPECT_TRUE( fields.empty() );
+    EXPECT_EQ( transport.rawCalls, 1u );
+    user->cancelled = true; EXPECT_TRUE( FAILED( nexus::presence::Prepare( user.get(), 123, fields ) ) );
+    EXPECT_TRUE( FAILED( nexus::presence::Prepare( nullptr, 123, fields ) ) );
+    EXPECT_TRUE( FAILED( nexus::presence::Prepare( user.get(), 0, fields ) ) ); EXPECT_EQ( transport.rawCalls, 1u );
+}
 TEST( NexusAuthentication, CompleteHandshakeKeepsActualXboxAndDistinctMsaIdentities )
 {
     Apartment apartment;
