@@ -167,7 +167,8 @@ static void Socket( const char *text )
 int main( int argc, char **argv )
 {
     InitializeLogging(); const auto com = CoInitializeEx( nullptr, COINIT_MULTITHREADED );
-    if ( argc == 3 && !strcmp( argv[1], "--socket" ) ) Socket( argv[2] );
+    if ( argc == 2 && !strcmp( argv[1], "--component" ) ) { Callbacks(); Dialogs(); UnregisterWait(); }
+    else if ( argc == 3 && !strcmp( argv[1], "--socket" ) ) Socket( argv[2] );
     else if ( argc == 2 && !strcmp( argv[1], "--bridge" ) )
     {
         std::vector<std::string> reply;

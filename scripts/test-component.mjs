@@ -17,7 +17,7 @@ const probes = [
     ['nexus_package-selection', 750],
     ['nexus_gamesave-sync', 283], ['nexus_gamesave-transfer', 263], ['nexus_gamesave-files', 25],
     ['nexus_gamesave-file-paths', 55],
-    ['nexus_game-invitations', 86],
+    ['nexus_game-invitations', 56, ['--component']],
 ];
 const binaries = ['xgameruntime.dll', 'test_xgameruntime.exe', 'test_nexus_configuration.exe', 'test_nexus_timer.exe', 'test_nexus_save.exe', 'test_nexus_user.exe', 'test_nexus_async_identity.exe', 'nexus_user-privilege.exe', 'nexus_auth-metadata.exe', 'nexus_store-entitlements.exe', 'nexus_runtime-init.exe', ...probes.map(([name]) => name + '.exe')];
 const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -83,8 +83,8 @@ try {
         if (!summary || Number(summary[1]) < 6 || Number(summary[2])) throw Error('Runtime initialization ABI failed: ' + mode);
         proof.results.push({name: 'runtime-init-' + mode, checks: Number(summary[1]), failures: 0});
     }
-    for (const [name, minimum] of probes) {
-        const output = execute(name, 'wine', [path.join(bin, name + '.exe')]);
+    for (const [name, minimum, args = []] of probes) {
+        const output = execute(name, 'wine', [path.join(bin, name + '.exe'), ...args]);
         const summary = output.match(/(?:^|\n)(?:ASYNC PROVIDER |ASYNC |QUEUE |CHUNK METADATA )?CHECKS (\d+) FAILURES (\d+)/);
         if (!summary || Number(summary[1]) < minimum || Number(summary[2]) || /(?:^|\n)FAIL /.test(output))
             throw Error(name + ' lost required ABI coverage');

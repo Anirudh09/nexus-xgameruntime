@@ -332,7 +332,9 @@ test('invitations bind actual runtime user, service session and queued activatio
     assert.match(ui,/CloseHandle\( thread \);\s*return E_PENDING;/);
     assert.doesNotMatch(network+events+ui,/ShellExecute|TerminateThread|GET_MODULE_HANDLE_EX_FLAG_PIN/);
     assert.match(read('src/System/XGameRuntimeFeature.cpp'),/case XGameRuntimeFeature::XGameInvite:\s*return nexus::invites::BridgeAvailable\(\)/);
-    assert.match(read('scripts/test-component.mjs'),/\['nexus_game-invitations', 86\]/);
+    assert.match(read('scripts/test-component.mjs'),/\['nexus_game-invitations', 56, \['--component'\]\]/);
+    assert.match(read('scripts/test-user-contracts.mjs'),/\['game-invitations',86\]/);
+    assert.match(read('tests/Nexus/game-invitations.cpp'),/else \{ Callbacks\(\); Requests\(\); Incoming\(\); Dialogs\(\); UnregisterWait\(\); \}/);
 });
 
 test('the C++ runtime preserves the explicit cloud shutdown drain outside DllMain',()=>{
