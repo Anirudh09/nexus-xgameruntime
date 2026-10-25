@@ -129,7 +129,11 @@ VOID XGameRuntime_DEBUG( IN Log_Category category, IN pid_t threadId, IN LPCSTR 
 
 static inline LPCSTR debugstr_guid( const GUID *id )
 {
+#ifdef __cplusplus
     static thread_local CHAR str[39];
+#else
+    static _Thread_local CHAR str[39];
+#endif
     sprintf( str, "{%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}",
                              (unsigned int)id->Data1, id->Data2, id->Data3,
                              id->Data4[0], id->Data4[1], id->Data4[2], id->Data4[3],

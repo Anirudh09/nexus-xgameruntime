@@ -8,6 +8,7 @@ project(xgameruntime
         VERSION ${GDKC_VERSION}.${GAMING_SERVICES_VERSION} )
 
 include( ExternalProject )
+include(cmake/Xml2.cmake)
 
 find_program(WIDL
         NAMES
@@ -16,6 +17,12 @@ find_program(WIDL
         REQUIRED )
 
 message( STATUS "Using widl: ${WIDL}" )
+
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    set(WIDL_ARCH -m32)
+else()
+    set(WIDL_ARCH -m64)
+endif()
 
 set(IDL_SOURCE_DIR
         ${CMAKE_CURRENT_SOURCE_DIR}/include )
@@ -32,6 +39,7 @@ include_directories( ${PROJECT_SOURCE_DIR}/include )
 file(GLOB_RECURSE IDL_FILES
         CONFIGURE_DEPENDS
         ${IDL_SOURCE_DIR}/*.idl )
+file(GLOB IDL_INPUT_HEADERS CONFIGURE_DEPENDS ${IDL_SOURCE_DIR}/*.h)
 
 set(IDL_GENERATED_FILES)
 
@@ -64,18 +72,22 @@ foreach(IDL_FILE ${IDL_FILES})
 
             COMMAND
             ${WIDL}
+            ${WIDL_ARCH}
             -h
             -o ${GENERATED_H}
             ${IDL_FILE}
 
             DEPENDS
-            ${IDL_FILE}
+            ${IDL_FILES}
+            ${IDL_INPUT_HEADERS}
 
             VERBATIM )
 
     list(APPEND IDL_GENERATED_FILES
             ${GENERATED_H})
 endforeach()
+
+include(cmake/Winrt.cmake)
 
 add_custom_target(xgameruntime-idl
         DEPENDS ${IDL_GENERATED_FILES} )

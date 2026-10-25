@@ -68,6 +68,7 @@
 #include <xuser.h>
 #include <xasync.h>
 
+#include <atomic>
 #include <mutex>
 #include <type_traits>
 
@@ -89,7 +90,7 @@ namespace GlobalState
 {
     inline std::mutex g_lock{};
     inline HMODULE xgameruntime = nullptr;
-    inline BOOLEAN initialized = FALSE;
+    inline std::atomic<BOOLEAN> initialized{ FALSE };
 
     inline HRESULT (WINAPI *InitializeApiImplEx2)( ULONG gdkVer, ULONG gsVer, char mode, const INITIALIZE_OPTIONS *options ) = nullptr;
     inline HRESULT (WINAPI *InitializeApiImplEx)( ULONG gdkVer, ULONG gsVer, char mode ) = nullptr;

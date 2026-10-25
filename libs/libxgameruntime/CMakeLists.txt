@@ -3,6 +3,8 @@ add_library(libxgameruntime STATIC
         Error.cpp
         Impl.cpp)
 
+target_compile_features(libxgameruntime PUBLIC cxx_std_23)
+
 target_link_libraries(libxgameruntime PRIVATE
         xgameruntime-common )
 

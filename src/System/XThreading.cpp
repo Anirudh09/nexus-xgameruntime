@@ -35,7 +35,6 @@ public:
         *out = nullptr;
 
         if ( iid == __uuidof( IUnknown ) ||
-             iid == __uuidof( IInspectable ) ||
              iid == __uuidof( IAgileObject ) ||
              iid == __uuidof( IXThreadingImpl ) )
         {
@@ -242,7 +241,7 @@ public:
     }
 
 private:
-    BOOLEAN isTimeSensitiveThread{ false };
+    inline static thread_local BOOLEAN isTimeSensitiveThread = FALSE;
     std::atomic_long ref{ 1 };
 };
 

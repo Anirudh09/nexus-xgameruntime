@@ -20,6 +20,28 @@
 
 #include <initguid.h>
 #include "private.h"
+#include "System/XSystem.h"
+#include "System/XGameSave.h"
+#include "System/XPackage.h"
+#include "System/XStore.h"
+#include "System/XDisplay.h"
+#include "System/XError.h"
+#include "System/XGameRuntimeFeature.h"
+#include "System/XGameUi.h"
+#include "System/XGameStreaming.h"
+#include "System/XGameProtocol.h"
+#include "System/XGameInvite.h"
+#include "System/XGameEvent.h"
+#include "System/XGameActivation.h"
+#include "System/XAppCapture.h"
+#include "System/XAccessibility.h"
+#include "System/XNetworking.h"
+#include "System/XGame.h"
+#include "System/PersistentStorage.h"
+#include "Runtime/Configuration.h"
+#include "Runtime/Shutdown.h"
+#include <xpersistentlocalstorage.h>
+#include "Runtime/StoreDiagnostics.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -57,7 +79,7 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, void *reserved )
 HRESULT WINAPI InitializeApiImplEx2( ULONG gdkVer, ULONG gsVer, char mode, const INITIALIZE_OPTIONS *options )
 {
     TRACE( "gdkVer %ld, gsVer %ld, mode %d, options %p.\n", gdkVer, gsVer, mode, options );
-    return S_OK;
+    return nexus::InitializeGameConfiguration(options);
 }
 
 HRESULT WINAPI InitializeApiImplEx( ULONG gdkVer, ULONG gsVer, char mode )
@@ -72,6 +94,8 @@ HRESULT WINAPI InitializeApiImpl( ULONG gdkVer, ULONG gsVer )
 
 HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
 {
+    if (!out) return E_POINTER;
+    *out = nullptr;
     // ------------ FOR FUTURE REFERENCES ------------
     //
     // Interfaces returned are COM interfaces and inherit IUnknown*
@@ -103,14 +127,65 @@ HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
         return x_threading_impl->QueryInterface( iid, out );
     }
 
+    if ( IsEqualGUID( clsid, CLSID_XGameImpl ) )
+        return GetGameInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XNetworkingImpl ) )
+        return GetNetworkingInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XAccessibilityImpl ) )
+        return GetAccessibilityInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XAppCaptureImpl ) )
+        return GetAppCaptureInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XAppCaptureMetadataImpl ) )
+        return GetAppCaptureMetadataInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XGameActivationImpl ) )
+        return GetGameActivationInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XGameEventImpl ) )
+        return GetGameEventInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XGameInviteImpl ) )
+        return GetGameInviteInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XGameProtocolImpl ) )
+        return GetGameProtocolInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XGameStreamingImpl ) )
+        return GetGameStreamingInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XGameUiImpl ) )
+        return GetGameUiInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XGameRuntimeFeatureImpl ) )
+        return GetGameRuntimeFeatureInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XDisplayImpl ) )
+        return GetDisplayInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XLauncherImpl ) )
+        return GetLauncherInterface()->QueryInterface( iid, out );
+    if ( IsEqualGUID( clsid, CLSID_XErrorImpl ) )
+        return GetErrorInterface()->QueryInterface( iid, out );
+    if (IsEqualGUID(clsid, CLSID_XStoreImpl))
+        return GetStoreInterface()->QueryInterface(iid,out);
+    if (IsEqualGUID(clsid, CLSID_XPackageImpl))
+        return GetPackageInterface()->QueryInterface(iid,out);
+    if (IsEqualGUID(clsid, CLSID_XGameSaveImpl))
+        return GetGameSaveInterface()->QueryInterface(iid,out);
+    if (IsEqualGUID(clsid, CLSID_XUserImpl))
+        return x_user_impl->QueryInterface(iid, out);
+    if (IsEqualGUID(clsid, CLSID_XUserDeviceImpl))
+        return x_user_device_impl->QueryInterface(iid, out);
+    if (IsEqualGUID(clsid, CLSID_XPersistentLocalStorageImpl))
+        return nexus::GetPersistentStorageInterface()->QueryInterface(iid, out);
+    if (IsEqualGUID(clsid, CLSID_XSystemImpl))
+        return nexus::GetSystemInterface()->QueryInterface(iid, out);
+    if (IsEqualGUID(clsid, CLSID_XSystemAnalyticsImpl))
+        return nexus::GetSystemAnalyticsInterface()->QueryInterface(iid, out);
+
     FIXME( "%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid( &clsid ) );
     return REGDB_E_CLASSNOTREG;
 }
 
+HRESULT WINAPI NexusRegisterCloudShutdown(nexus::CloudShutdownCallback callback,void *context)
+{
+    return nexus::RegisterCloudShutdown(callback,context);
+}
+
 HRESULT WINAPI UninitializeApiImpl()
 {
-    TRACE("stub!\n");
-    return E_NOTIMPL;
+    return nexus::DrainCloudShutdown();
 }
 
 HRESULT WINAPI XErrorReport( HRESULT status, LPCSTR message )

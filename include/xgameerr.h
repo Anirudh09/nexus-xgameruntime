@@ -21,6 +21,10 @@
 
 #include <specstrings.h>
 
+#ifndef E_NO_TASK_QUEUE
+#define E_NO_TASK_QUEUE HRESULT_FROM_WIN32(ERROR_NO_TASK_QUEUE)
+#endif
+
 #define E_GAME_MISSING_GAME_CONFIG                                  _HRESULT_TYPEDEF_(0x87E5001FL)
 #define E_GAMERUNTIME_NOT_INITIALIZED                               _HRESULT_TYPEDEF_(0x89240100L)
 #define E_GAMERUNTIME_DLL_NOT_FOUND                                 _HRESULT_TYPEDEF_(0x89240101L)

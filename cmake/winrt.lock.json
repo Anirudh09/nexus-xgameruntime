@@ -1,0 +1,18 @@
+{
+  "commit": "7fc704ef49c50e9702c9983a5250d5738697bb04",
+  "files": {
+    "windows.data.json.idl": "270892463255a85208b0e1d44e9cb03d23a8caef69efedcceafae703a5cc50d0",
+    "inspectable.idl": "654827cf7cb07abe71efd20daa790502534b94927873e3be7eb59296f6656ce7",
+    "wtypes.idl": "a2d982314f50c9193cf2f38c26de5490bec0268acc69e10410b4d51aaa90a563",
+    "basetsd.h": "bc8418c4543e74c726424c6ffb3f92ca6b4e6061c8daa29eba3afe1d51d691ef",
+    "guiddef.h": "0c8e7214db5acc125632ae225a87113b8af825e27f66a44a67381e6675f9cb4b",
+    "unknwn.idl": "43362d54e6c857527fc45fba2979a484690fa313c34814419e9f66555a0e797b",
+    "hstring.idl": "114008cb67b2c186b4d668d5fd0ad792545c02078de70613adf691c9db27495a",
+    "asyncinfo.idl": "bc7e5c789839620891a879b1e05518ccbdbc68cb8bf7a611b7fdbd226e7343ee",
+    "eventtoken.idl": "1d2c0a5a2189665c17f18bae8a0fed26564a8e8aa4e1a15c39bf796372fa362a",
+    "windowscontracts.idl": "3f79a498f4baaac99a4c4fcfb87311009b4daf7b4284d721881cec7423d28a86",
+    "windows.foundation.idl": "bec23ad6e027c7e31425aac56136885de92f3f31906202e0e0444f17b8a64810",
+    "ivectorchangedeventargs.idl": "93cc7da22a97210d0b46e016364c1e7225d174dcc1980f3584ea7fafce79d375",
+    "windows.foundation.collections.idl": "7cd2143a393077a8f9039b63594abcc2056b17eb303fec3bff0fd082d5ac646b"
+  }
+}

@@ -20,10 +20,23 @@
  */
 
 #include "private.h"
+#include <memory>
+
+struct InterfaceRelease
+{
+    template<typename T>
+    void operator()( T *value ) const noexcept
+    {
+        if ( value ) value->Release();
+    }
+};
+
+template<typename T>
+using InterfaceReference = std::unique_ptr<std::remove_pointer_t<T>, InterfaceRelease>;
 
 // This is mainly to prevent code repetition
 template <typename T>
-T
+InterfaceReference<T>
 QueryApiImpl(
     REFCLSID clsid
 ) {
@@ -49,7 +62,8 @@ QueryApiImpl(
     } else
         throw Exception( hr );
 
-    return result;
+    if ( !result ) throw Exception( E_UNEXPECTED );
+    return InterfaceReference<T>( result );
 }
 
 template <typename R, typename F>

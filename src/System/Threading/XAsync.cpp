@@ -23,11 +23,13 @@
 
 #include <atomic>
 #include <condition_variable>
+#include "AsyncIdentity.h"
 #include <type_traits>
 
 // Signatures can be anything because these are not exposed to the client.
 #define ASYNC_BLOCK_SIG         0x41535942 // ASYB
 #define ASYNC_BLOCK_RESULT_SIG  0x41535242 // ASRB
+#define ASYNC_BLOCK_DONE_SIG    0x41534442 // ASDB
 #define ASYNC_STATE_SIG         0x41535445 // ASTE
 
 std::atomic<uint32_t> s_AsyncLibGlobalStateCount{ 0 };
@@ -58,7 +60,12 @@ struct AsyncState
     std::condition_variable waitCondition;
     bool waitSatisfied = false;
     HANDLE waitEvent = nullptr;
+    std::atomic<HRESULT> completionResult{E_PENDING};
+    AsyncState* completionNext = nullptr;
+    bool completionRegistered = false;
 
+    SIZE_T resultBufferSize = 0; // Immutable after terminal status publication.
+    std::atomic<bool> resultRetrievalStarted{false};
     const void* identity = nullptr;
     const char* identityName = nullptr;
 
@@ -119,12 +126,20 @@ private:
 
 struct AsyncBlockInternal
 {
-    AsyncState* state = nullptr;
+    // Once state is detached, the same pointer-sized slot retains only the
+    // operation identity. The signature discriminates it, including on x86
+    // where the public opaque buffer has no spare pointer-sized storage.
+    union
+    {
+        AsyncState* state = nullptr;
+        const void* completedIdentity;
+    };
     HRESULT status = E_PENDING;
-    DWORD signature = ASYNC_BLOCK_SIG;
+    std::atomic<DWORD> signature{ASYNC_BLOCK_SIG};
     std::atomic_flag lock = ATOMIC_FLAG_INIT;
 };
 
+static_assert(std::atomic<DWORD>::is_always_lock_free, "Async signature publication must remain lock-free");
 static_assert(sizeof(AsyncBlockInternal) <= sizeof(XAsyncBlock::internal),
     "Unexpected size for AsyncBlockInternal");
 static_assert(std::alignment_of<AsyncBlockInternal>::value == std::alignment_of<void*>::value,
@@ -195,6 +210,75 @@ private:
     AsyncState* m_state;
 };
 
+// Completed zero-payload operations detach their state from XAsyncBlock before
+// dispatching completion. Keep an intrusive wait reference outside caller memory
+// until the callback returns, so waiting cannot skip completion or read a block
+// that a completion callback has already freed or reused.
+static std::mutex completionWaitLock;
+static AsyncState* completionWaitHead = nullptr;
+static thread_local AsyncState* currentCompletion = nullptr;
+
+static void RegisterCompletionWait(const AsyncStateRef& state)
+{
+    std::lock_guard<std::mutex> guard(completionWaitLock);
+    if (state->completionRegistered) return;
+    state->AddRef();
+    state->completionNext = completionWaitHead;
+    completionWaitHead = state.Get();
+    state->completionRegistered = true;
+}
+
+static AsyncStateRef FindCompletionWait(XAsyncBlock* block)
+{
+    std::lock_guard<std::mutex> guard(completionWaitLock);
+    for (auto* item = completionWaitHead; item; item = item->completionNext)
+        if (item->userAsyncBlock == block) return AsyncStateRef(item);
+    return {};
+}
+
+static void RemoveCompletionWait(AsyncState* state)
+{
+    bool removed = false;
+    {
+        std::lock_guard<std::mutex> guard(completionWaitLock);
+        for (auto** item = &completionWaitHead; *item; item = &(*item)->completionNext)
+            if (*item == state)
+            {
+                *item = state->completionNext;
+                state->completionNext = nullptr;
+                state->completionRegistered = false;
+                removed = true;
+                break;
+            }
+    }
+    if (removed) state->Release();
+}
+
+static void RetirePreviousCompletionWait(XAsyncBlock* block)
+{
+    AsyncState* retired = nullptr;
+    {
+        std::lock_guard<std::mutex> guard(completionWaitLock);
+        auto** item = &completionWaitHead;
+        while (*item)
+        {
+            auto* state = *item;
+            if (state->userAsyncBlock != block) { item = &state->completionNext; continue; }
+            *item = state->completionNext;
+            state->completionRegistered = false;
+            state->completionNext = retired;
+            retired = state;
+        }
+    }
+    while (retired)
+    {
+        auto* state = retired;
+        retired = retired->completionNext;
+        state->completionNext = nullptr;
+        state->Release();
+    }
+}
+
 class AsyncBlockInternalGuard
 {
 public:
@@ -208,7 +292,7 @@ public:
             m_internal = reinterpret_cast<AsyncBlockInternal*>(asyncBlock->internal);
         }
 
-        if (m_internal->state != nullptr)
+        if (m_internal->signature == ASYNC_BLOCK_SIG && m_internal->state != nullptr)
         {
             m_userInternal = reinterpret_cast<AsyncBlockInternal*>(m_internal->state->userAsyncBlock->internal);
         }
@@ -237,7 +321,7 @@ public:
 
     AsyncStateRef GetState() const noexcept
     {
-        AsyncStateRef state{ m_internal->state };
+        AsyncStateRef state{ m_internal->signature == ASYNC_BLOCK_SIG ? m_internal->state : nullptr };
 
         if (state != nullptr && state->signature != ASYNC_STATE_SIG)
         {
@@ -250,9 +334,10 @@ public:
 
     AsyncStateRef ExtractState(bool resultsRetrieved = false) const noexcept
     {
-        AsyncStateRef state{ m_internal->state };
-        m_internal->state = nullptr;
-        m_userInternal->state = nullptr;
+        AsyncStateRef state{ m_internal->signature == ASYNC_BLOCK_SIG ? m_internal->state : nullptr };
+        const void* identity = state != nullptr ? state->identity : nullptr;
+        m_internal->completedIdentity = identity;
+        m_userInternal->completedIdentity = identity;
 
         if (resultsRetrieved)
         {
@@ -261,8 +346,8 @@ public:
         }
         else
         {
-            m_internal->signature = 0;
-            m_userInternal->signature = 0;
+            m_internal->signature = ASYNC_BLOCK_DONE_SIG;
+            m_userInternal->signature = ASYNC_BLOCK_DONE_SIG;
         }
 
         if (state != nullptr && state->signature != ASYNC_STATE_SIG)
@@ -277,6 +362,15 @@ public:
     HRESULT GetStatus() const noexcept
     {
         return m_internal->status;
+    }
+
+    bool MatchesIdentity(const void* identity) const noexcept
+    {
+        if (m_internal->signature == ASYNC_BLOCK_SIG)
+            return m_internal->state != nullptr && m_internal->state->identity == identity;
+        if (m_internal->signature == ASYNC_BLOCK_DONE_SIG || m_internal->signature == ASYNC_BLOCK_RESULT_SIG)
+            return m_internal->completedIdentity == identity;
+        return false;
     }
 
     bool GetResultsRetrieved()
@@ -314,11 +408,18 @@ private:
 
         if (lockedResult->signature != ASYNC_BLOCK_SIG)
         {
-            lockedResult->state = nullptr;
+            if (lockedResult->signature != ASYNC_BLOCK_DONE_SIG && lockedResult->signature != ASYNC_BLOCK_RESULT_SIG)
+                lockedResult->state = nullptr;
             return nullptr;
         }
 
         SpinLock::Lock(lockedResult->lock);
+        // Completion can replace state with the terminal identity while we wait.
+        if (lockedResult->signature != ASYNC_BLOCK_SIG)
+        {
+            lockedResult->lock.clear();
+            return nullptr;
+        }
 
         if (lockedResult->state != nullptr && asyncBlock != &lockedResult->state->providerAsyncBlock)
         {
@@ -328,7 +429,7 @@ private:
             AsyncBlockInternal* stateAsyncBlockInternal = reinterpret_cast<AsyncBlockInternal*>(state->providerAsyncBlock.internal);
             SpinLock::Lock(stateAsyncBlockInternal->lock);
 
-            if (stateAsyncBlockInternal->state == nullptr)
+            if (stateAsyncBlockInternal->signature != ASYNC_BLOCK_SIG || stateAsyncBlockInternal->state == nullptr)
             {
                 stateAsyncBlockInternal->lock.clear();
                 SpinLock::Lock(lockedResult->lock);
@@ -342,6 +443,13 @@ private:
         return lockedResult;
     }
 };
+
+HRESULT nexus::GetAsyncStatusForIdentity(XAsyncBlock* async,const void* identity) noexcept
+{
+    if (!async || !identity) return E_INVALIDARG;
+    AsyncBlockInternalGuard internal{async};
+    return internal.MatchesIdentity(identity) ? internal.GetStatus() : E_INVALIDARG;
+}
 
 static void CALLBACK CompletionCallback(void* context, BOOLEAN canceled);
 static void CALLBACK WorkerCallback(void* context, BOOLEAN canceled);
@@ -404,6 +512,7 @@ static HRESULT AllocState(XAsyncBlock* asyncBlock, size_t contextSize)
         RETURN_HR(E_INVALIDARG);
     }
 
+    RetirePreviousCompletionWait(asyncBlock);
     for (auto i = 0u; i < sizeof(asyncBlock->internal); ++i)
     {
         asyncBlock->internal[i] = 0;
@@ -427,8 +536,11 @@ static void CleanupState(AsyncStateRef&& state)
 {
     if (state != nullptr)
     {
-        // Should only cleanup state after calling ExtractState to clear it.
-        assert((reinterpret_cast<AsyncBlockInternal*>(state->providerData.async->internal))->state == nullptr);
+        // ExtractState must have replaced ownership with the exact immutable
+        // identity, never a pointer still interpreted as an active state.
+        const auto* internal=reinterpret_cast<AsyncBlockInternal*>(state->providerData.async->internal);
+        assert(internal->signature==ASYNC_BLOCK_DONE_SIG || internal->signature==ASYNC_BLOCK_RESULT_SIG);
+        assert(internal->completedIdentity==state->identity);
 
         state->valid = false;
         state->Release();
@@ -496,6 +608,7 @@ static void SignalWait(AsyncStateRef const& state)
     {
         XTaskQueueResumeTermination(state->queue);
     }
+    RemoveCompletionWait(state.Get());
 }
 
 static void CALLBACK CompletionCallback(
@@ -508,9 +621,18 @@ static void CALLBACK CompletionCallback(
     state.Attach(static_cast<AsyncState*>(context));
 
     XAsyncBlock* asyncBlock = state->userAsyncBlock;
-    if (state->providerAsyncBlock.callback != nullptr)
+    struct CompletionScope
     {
-        state->providerAsyncBlock.callback(asyncBlock);
+        AsyncState* previous;
+        explicit CompletionScope(AsyncState* value) : previous(currentCompletion) { currentCompletion = value; }
+        ~CompletionScope() { currentCompletion = previous; }
+    };
+    {
+        CompletionScope scope(state.Get());
+        if (state->providerAsyncBlock.callback != nullptr)
+        {
+            state->providerAsyncBlock.callback(asyncBlock);
+        }
     }
 
     SignalWait(state);
@@ -574,6 +696,7 @@ HRESULT WINAPI XAsyncGetStatus(
         state = internal.GetState();
     }
 
+    if (wait && state == nullptr) state = FindCompletionWait(asyncBlock);
     if (wait)
     {
         if (state == nullptr)
@@ -581,7 +704,7 @@ HRESULT WINAPI XAsyncGetStatus(
             assert(result != E_PENDING);
             RETURN_HR_IF(E_INVALIDARG, result == E_PENDING);
         }
-        else
+        else if (currentCompletion != state.Get())
         {
             if (s_AsyncLibEnablePumpingWait)
             {
@@ -603,10 +726,7 @@ HRESULT WINAPI XAsyncGetStatus(
                 }
             }
 
-            {
-                AsyncBlockInternalGuard internal{ asyncBlock };
-                result = internal.GetStatus();
-            }        
+            result = state->completionResult.load();
         }
     }
 
@@ -625,7 +745,7 @@ HRESULT WINAPI XAsyncGetResultSize(
         state = internal.GetState();
     }
 
-    *bufferSize = state == nullptr ? 0 : state->providerData.bufferSize;
+    *bufferSize = state == nullptr ? 0 : state->resultBufferSize;
 
     return result;
 }
@@ -775,6 +895,7 @@ HRESULT WINAPI XAsyncSchedule(
     XAsyncBlock* asyncBlock,
     UINT32 delayInMs
 ) {
+    RETURN_HR_IF(E_INVALIDARG, asyncBlock == nullptr);
     HRESULT existingStatus;
     AsyncStateRef state;
     {
@@ -839,6 +960,9 @@ void WINAPI XAsyncComplete(
         if (completedNow)
         {
             state->providerData.bufferSize = requiredBufferSize;
+            state->resultBufferSize = requiredBufferSize;
+            state->completionResult.store(result);
+            if (state->providerAsyncBlock.callback) RegisterCompletionWait(state);
         }
     }
 
@@ -864,6 +988,7 @@ HRESULT WINAPI XAsyncGetResult(
     HRESULT result = E_PENDING;
     AsyncStateRef state;
     bool resultsAlreadyReturned;
+    bool resultAccessed = false;
 
     {
         AsyncBlockInternalGuard internal{ asyncBlock };
@@ -901,10 +1026,10 @@ HRESULT WINAPI XAsyncGetResult(
             }
 
             result = E_INVALIDARG;
-            assert(false);
+            // A mismatched call/result is a recoverable API argument error.
             assert(sprintfResult > 0);
         }
-        else if (state->providerData.bufferSize == 0)
+        else if (state->resultBufferSize == 0)
         {
             result = E_NOTIMPL;
         }
@@ -912,15 +1037,20 @@ HRESULT WINAPI XAsyncGetResult(
         {
             result = E_INVALIDARG;
         }
-        else if (bufferSize < state->providerData.bufferSize)
+        else if (bufferSize < state->resultBufferSize)
         {
             result = E_NOT_SUFFICIENT_BUFFER;
         }
+        else if (state->resultRetrievalStarted.exchange(true))
+        {
+            result = E_ILLEGAL_METHOD_CALL;
+        }
         else
         {
+            resultAccessed = true;
             if (bufferUsed != nullptr)
             {
-                *bufferUsed = state->providerData.bufferSize;
+                *bufferUsed = state->resultBufferSize;
             }
 
             state->providerData.bufferSize = bufferSize;
@@ -929,7 +1059,11 @@ HRESULT WINAPI XAsyncGetResult(
         }
     }
 
-    if (result != E_PENDING && state != nullptr)
+    if (resultAccessed && result == E_PENDING) state->resultRetrievalStarted = false;
+
+    // Argument failures must retain the result for a corrected retry. Only the
+    // single provider invocation consumes state and runs its cleanup.
+    if (resultAccessed && result != E_PENDING && state != nullptr)
     {
         {
             AsyncBlockInternalGuard internal{ asyncBlock };

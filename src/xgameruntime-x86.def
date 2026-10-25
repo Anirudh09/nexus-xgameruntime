@@ -1,0 +1,11 @@
+LIBRARY xgameruntime.dll
+EXPORTS
+    QueryApiImpl=QueryApiImpl@12
+    InitializeApiImpl=InitializeApiImpl@8
+    InitializeApiImplEx=InitializeApiImplEx@12
+    InitializeApiImplEx2=InitializeApiImplEx2@16
+    NexusRegisterCloudShutdown=NexusRegisterCloudShutdown@8
+    UninitializeApiImpl=UninitializeApiImpl@0
+    XErrorReport=XErrorReport@8
+
+XodusSaveFilesMonitor=XodusSaveFilesMonitor@16
