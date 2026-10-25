@@ -21,6 +21,10 @@ target_sources(xgameruntime-impl PRIVATE
         System/XGameProtocol.cpp
         System/XGameStreaming.cpp
         System/XGameUi.cpp
+        System/GameInvite/Bridge.cpp
+        System/GameInvite/Events.cpp
+        System/GameInvite/Network.cpp
+        System/GameInvite/Ui.cpp
         System/XGameRuntimeFeature.cpp
         System/XDisplay.cpp
         System/XError.cpp

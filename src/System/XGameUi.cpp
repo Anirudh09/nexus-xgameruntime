@@ -20,6 +20,7 @@
  */
 
 #include "XGameUi.h"
+#include "GameInvite/Events.h"
 
 HRESULT WINAPI XGameUiImpl::XGameUiShowMessageDialogAsync( XAsyncBlock *async, const char *titleText,
                                                            const char *contentText, const char *firstButtonText,
@@ -45,13 +46,13 @@ HRESULT WINAPI XGameUiImpl::XGameUiShowSendGameInviteAsync( XAsyncBlock *async, 
                                                             const char *customActivationContext )
 {
     ( void )0;
-    return E_NOTIMPL;
+    return nexus::invites::ShowInvite( async, requestingUser, sessionConfigurationId, sessionTemplateName, sessionId, invitationText, customActivationContext );
 }
 
 HRESULT WINAPI XGameUiImpl::XGameUiShowSendGameInviteResult( XAsyncBlock *async )
 {
     ( void )0;
-    return E_NOTIMPL;
+    return nexus::invites::ShowInviteResult( async );
 }
 
 HRESULT WINAPI XGameUiImpl::XGameUiShowPlayerProfileCardAsync( XAsyncBlock *async, XUserHandle requestingUser,
@@ -207,13 +208,13 @@ HRESULT WINAPI XGameUiImpl::XGameUiShowMultiplayerActivityGameInviteAsync( XAsyn
                                                                            XUserHandle requestingUser )
 {
     ( void )0;
-    return E_NOTIMPL;
+    return nexus::invites::ShowActivityInvite( async, requestingUser );
 }
 
 HRESULT WINAPI XGameUiImpl::XGameUiShowMultiplayerActivityGameInviteResult( XAsyncBlock *async )
 {
     ( void )0;
-    return E_NOTIMPL;
+    return nexus::invites::ShowActivityInviteResult( async );
 }
 
 HRESULT WINAPI XGameUiImpl::__PADDING_7__()

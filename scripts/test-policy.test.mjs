@@ -263,6 +263,26 @@ test('optional API families use actual C++ providers without fabricated availabi
     assert.match(read('tests/Nexus/test_optional_providers.cpp'),/DisplayAndLauncherShareCanonicalIUnknown/);
 });
 
+test('invitations bind actual runtime user, service session and queued activation without protocol execution',()=>{
+    const network=read('src/System/GameInvite/Network.cpp'),events=read('src/System/GameInvite/Events.cpp'),ui=read('src/System/GameInvite/Ui.cpp');
+    assert.match(network,/XUserGetTokenAndSignatureAsync/);
+    assert.match(network,/xuser_is_current_user/);
+    assert.match(network,/https:\/\/sessiondirectory\.xboxlive\.com\/handles/);
+    assert.match(network,/activities\/query/);
+    assert.match(network,/WinHttpWebSocketCompleteUpgrade/);
+    assert.match(network,/WINHTTP_FLAG_ASYNC/);
+    assert.match(network,/state->outgoing = frame/);
+    assert.doesNotMatch(network,/SECURITY_FLAG_IGNORE|WINHTTP_OPTION_SECURITY_FLAGS|WINHTTP_OPTION_RECEIVE_TIMEOUT/);
+    assert.match(events,/XTaskQueuePort::Completion/);
+    assert.match(events,/currentRegistration != registration.get\(\)/);
+    assert.match(ui,/GetAsyncStatusForIdentity\( async, &inviteIdentity/);
+    assert.match(ui,/GetAsyncStatusForIdentity\( async, &activityIdentity/);
+    assert.match(ui,/CloseHandle\( thread \);\s*return E_PENDING;/);
+    assert.doesNotMatch(network+events+ui,/ShellExecute|TerminateThread|GET_MODULE_HANDLE_EX_FLAG_PIN/);
+    assert.match(read('src/System/XGameRuntimeFeature.cpp'),/case XGameRuntimeFeature::XGameInvite:\s*return nexus::invites::BridgeAvailable\(\)/);
+    assert.match(read('scripts/test-component.mjs'),/\['nexus_game-invitations', 86\]/);
+});
+
 test('the C++ runtime preserves the explicit cloud shutdown drain outside DllMain',()=>{
     assert.match(read('src/main.cpp'),/return nexus::DrainCloudShutdown/);
     assert.match(read('src/xgameruntime.def'),/NexusRegisterCloudShutdown/);

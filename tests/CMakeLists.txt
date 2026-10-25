@@ -114,6 +114,13 @@ foreach(probe sync transfer)
 endforeach()
 
 add_executable(nexus_gamesave-file-paths Nexus/gamesave-file-paths.cpp)
+
+add_executable(nexus_game-invitations Nexus/game-invitations.cpp)
+target_link_libraries(nexus_game-invitations PRIVATE xgameruntime-impl)
+target_compile_features(nexus_game-invitations PRIVATE cxx_std_23)
+target_link_options(nexus_game-invitations PRIVATE -static -static-libgcc -static-libstdc++)
+set_target_properties(nexus_game-invitations PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 target_link_libraries(nexus_gamesave-file-paths PRIVATE xgameruntime-impl)
 target_compile_features(nexus_gamesave-file-paths PRIVATE cxx_std_23)
 target_link_options(nexus_gamesave-file-paths PRIVATE -static -static-libgcc -static-libstdc++)

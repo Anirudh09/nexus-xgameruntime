@@ -20,6 +20,7 @@
  */
 
 #include "XGameProtocol.h"
+#include "GameInvite/Events.h"
 
 /* Protocol activation is how a title gets launched from a URI. Nothing here
  * delivers such launches yet, but refusing the registration reads as a broken
@@ -34,14 +35,14 @@ HRESULT WINAPI XGameProtocolImpl::XGameProtocolRegisterForActivation( XTaskQueue
 
     if ( token ) token->token = 0;
     if ( !callback || !token ) return E_INVALIDARG;
-    return E_NOTIMPL;
+    return nexus::invites::GetEvents().Register( nexus::invites::EventKind::Protocol, queue, context, { nullptr, nullptr, callback }, token );
 }
 
 BOOLEAN WINAPI XGameProtocolImpl::XGameProtocolUnregisterForActivation( XTaskQueueRegistrationToken token,
                                                                         BOOLEAN wait )
 {
     ( void )0;
-    return FALSE;
+    return nexus::invites::GetEvents().Unregister( nexus::invites::EventKind::Protocol, token, wait );
 }
 
 IUnknown *GetGameProtocolInterface() noexcept
