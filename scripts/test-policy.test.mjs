@@ -381,6 +381,19 @@ test('numeric auth privacy assertions remain and bounded retry uses the actual C
     assert.match(read('tests/Nexus/test_user.cpp'),/SignInRetryKeepsFiveAttemptBoundAndNumericDiagnostics/);
 });
 
+test('desktop streaming lifecycle never advertises remote streaming support or writes client IDs',()=>{
+    const source=read('src/System/XGameStreaming.cpp');
+    assert.match(source,/std::atomic<bool> desktopInitialized/);
+    assert.match(source,/desktopInitialized\.store\( true, std::memory_order_release \)/);
+    assert.match(source,/desktopInitialized\.store\( false, std::memory_order_release \)/);
+    assert.match(source,/if \( clientsUsed \) \*clientsUsed = 0/);
+    assert.match(source,/return E_GAMESTREAMING_NOT_INITIALIZED/);
+    const features=read('src/System/XGameRuntimeFeature.cpp');
+    assert.doesNotMatch(features,/case XGameRuntimeFeature::XGameStreaming:/);
+    assert.match(read('tests/Nexus/test_optional_providers.cpp'),/ConcurrentInitializationAndTeardownNeverInventClients/);
+    assert.match(read('scripts/test-component.mjs'),/Number\(match\[1\]\) < 76/);
+});
+
 test('WinRT-dependent privilege validation has a separate matching-engine gate',()=>{
     assert.match(read('scripts/test-user-contracts.mjs'),/PINNED_WINE_EXECUTABLE/);
     assert.match(read('scripts/test-user-contracts.mjs'),/user-privilege',1162/);

@@ -13,6 +13,9 @@
 #include <xgameruntimefeature.h>
 #include <xgamestreaming.h>
 #include <xgameui.h>
+#include <xgameerr.h>
+#include <atomic>
+#include <thread>
 
 namespace
 {
@@ -556,6 +559,112 @@ TEST( NexusOptionalAbi, IXGameEventImplOriginalSlotsRemainCallable )
     object->Release();
 }
 
+TEST( NexusDesktopStreaming, LifecycleSharesAnEmptyDesktopContextAcrossInterfaces )
+{
+    Module module;
+    auto api = static_cast<IXGameStreamingImpl3 *>(
+        module.Query( CLSID_XGameStreamingImpl, __uuidof( IXGameStreamingImpl3 ) ) );
+    auto base = static_cast<IXGameStreamingImpl *>(
+        module.Query( CLSID_XGameStreamingImpl, __uuidof( IXGameStreamingImpl ) ) );
+    ASSERT_NE( api, nullptr );
+    ASSERT_NE( base, nullptr );
+    api->XGameStreamingUninitialize();
+    UINT32 used = 17;
+    EXPECT_EQ( api->XGameStreamingGetClients( 0, nullptr, &used ), E_GAMESTREAMING_NOT_INITIALIZED );
+    EXPECT_EQ( used, 0u );
+    EXPECT_FALSE( api->XGameStreamingIsStreaming() );
+    EXPECT_EQ( api->XGameStreamingGetClientCount(), 0u );
+    SetLastError( 0x12345678 );
+    EXPECT_EQ( api->XGameStreamingInitialize(), S_OK );
+    EXPECT_EQ( GetLastError(), 0x12345678u );
+    EXPECT_EQ( base->XGameStreamingInitialize(), S_OK );
+    used = 17;
+    EXPECT_EQ( base->XGameStreamingGetClients( 0, nullptr, &used ), S_OK );
+    EXPECT_EQ( used, 0u );
+    EXPECT_FALSE( api->XGameStreamingIsStreaming() );
+    EXPECT_EQ( api->XGameStreamingGetClientCount(), 0u );
+    base->XGameStreamingUninitialize();
+    used = 17;
+    EXPECT_EQ( api->XGameStreamingGetClients( 0, nullptr, &used ), E_GAMESTREAMING_NOT_INITIALIZED );
+    EXPECT_EQ( used, 0u );
+    api->XGameStreamingUninitialize();
+    EXPECT_EQ( api->XGameStreamingInitialize(), S_OK );
+    EXPECT_EQ( api->XGameStreamingGetClients( 0, nullptr, nullptr ), S_OK );
+    auto feature = static_cast<IXGameRuntimeFeatureImpl *>(
+        module.Query( CLSID_XGameRuntimeFeatureImpl, __uuidof( IXGameRuntimeFeatureImpl ) ) );
+    ASSERT_NE( feature, nullptr );
+    EXPECT_FALSE( feature->XGameRuntimeIsFeatureAvailable( XGameRuntimeFeature::XGameStreaming ) );
+    feature->Release();
+    api->XGameStreamingUninitialize();
+    base->Release();
+    api->Release();
+}
+
+TEST( NexusDesktopStreaming, EmptyEnumerationDoesNotWriteClientIdsOrInventRemoteData )
+{
+    Module module;
+    auto api = static_cast<IXGameStreamingImpl3 *>(
+        module.Query( CLSID_XGameStreamingImpl, __uuidof( IXGameStreamingImpl3 ) ) );
+    ASSERT_NE( api, nullptr );
+    EXPECT_EQ( api->XGameStreamingInitialize(), S_OK );
+    XGameStreamingClientId clients[] = { 0x123456789abcdef0ULL, 0xfedcba9876543210ULL };
+    UINT32 used = 17;
+    EXPECT_EQ( api->XGameStreamingGetClients( 2, clients, &used ), S_OK );
+    EXPECT_EQ( used, 0u );
+    EXPECT_EQ( clients[0], 0x123456789abcdef0ULL );
+    EXPECT_EQ( clients[1], 0xfedcba9876543210ULL );
+    EXPECT_EQ( api->XGameStreamingGetClients( UINT32_MAX, clients, &used ), S_OK );
+    EXPECT_EQ( used, 0u );
+    EXPECT_EQ( clients[0], 0x123456789abcdef0ULL );
+    EXPECT_EQ( clients[1], 0xfedcba9876543210ULL );
+    used = 17;
+    EXPECT_EQ( api->XGameStreamingGetClients( 1, nullptr, &used ), E_INVALIDARG );
+    EXPECT_EQ( used, 0u );
+    EXPECT_EQ( api->XGameStreamingGetConnectionState( 0x1234 ), XGameStreamingConnectionState::Disconnected );
+    XTaskQueueRegistrationToken token{};
+    EXPECT_EQ( api->XGameStreamingRegisterConnectionStateChanged( nullptr, nullptr, nullptr, &token ), E_NOTIMPL );
+    EXPECT_EQ( token.token, 0u );
+    UINT32 horizontal = 123, vertical = 456;
+    EXPECT_EQ( api->XGameStreamingGetStreamPhysicalDimensions( 0x1234, &horizontal, &vertical ), E_NOTIMPL );
+    EXPECT_EQ( horizontal, 123u );
+    EXPECT_EQ( vertical, 456u );
+    EXPECT_FALSE( api->XGameStreamingUnregisterConnectionStateChanged( token, TRUE ) );
+    api->XGameStreamingUninitialize();
+    api->Release();
+}
+
+TEST( NexusDesktopStreaming, ConcurrentInitializationAndTeardownNeverInventClients )
+{
+    Module module;
+    auto api = static_cast<IXGameStreamingImpl3 *>(
+        module.Query( CLSID_XGameStreamingImpl, __uuidof( IXGameStreamingImpl3 ) ) );
+    ASSERT_NE( api, nullptr );
+    api->XGameStreamingUninitialize();
+    std::atomic<unsigned> failures{};
+    std::thread workers[8];
+    for ( auto &worker : workers ) worker = std::thread( [&]
+    {
+        for ( unsigned i = 0; i < 200; ++i )
+        {
+            if ( api->XGameStreamingInitialize() != S_OK ) ++failures;
+            XGameStreamingClientId client = 0x123456789abcdef0ULL;
+            UINT32 used = 17;
+            const HRESULT hr = api->XGameStreamingGetClients( 1, &client, &used );
+            if ( ( hr != S_OK && hr != E_GAMESTREAMING_NOT_INITIALIZED ) || used ||
+                 client != 0x123456789abcdef0ULL || api->XGameStreamingIsStreaming() ||
+                 api->XGameStreamingGetClientCount() ) ++failures;
+            api->XGameStreamingUninitialize();
+        }
+    } );
+    for ( auto &worker : workers ) worker.join();
+    EXPECT_EQ( failures.load(), 0u );
+    api->XGameStreamingUninitialize();
+    UINT32 used = 17;
+    EXPECT_EQ( api->XGameStreamingGetClients( 0, nullptr, &used ), E_GAMESTREAMING_NOT_INITIALIZED );
+    EXPECT_EQ( used, 0u );
+    api->Release();
+}
+
 TEST( NexusOptionalAbi, IXGameStreamingImpl3OriginalSlotsRemainCallable )
 {
     Module module;
@@ -566,7 +675,8 @@ TEST( NexusOptionalAbi, IXGameStreamingImpl3OriginalSlotsRemainCallable )
         // Frozen original C table slot 3: x_game_streaming_XGameStreamingInitialize
         using Function = HRESULT( WINAPI * )( void *self );
         auto call = reinterpret_cast<Function>( table[3] );
-        EXPECT_EQ( call( object ), E_NOTIMPL );
+        // The ABI slot is unchanged, its desktop lifecycle is now implemented.
+        EXPECT_EQ( call( object ), S_OK );
     }
     {
         // Frozen original C table slot 6: x_game_streaming_XGameStreamingRegisterClientPropertiesChanged
@@ -588,7 +698,7 @@ TEST( NexusOptionalAbi, IXGameStreamingImpl3OriginalSlotsRemainCallable )
         using Function =
             HRESULT( WINAPI * )( void *self, UINT32 clientCount, XGameStreamingClientId *clients, UINT32 *clientsUsed );
         auto call = reinterpret_cast<Function>( table[10] );
-        EXPECT_EQ( call( object, {}, {}, {} ), E_NOTIMPL );
+        EXPECT_EQ( call( object, {}, {}, {} ), S_OK );
     }
     {
         // Frozen original C table slot 12: x_game_streaming_XGameStreamingRegisterConnectionStateChanged
@@ -702,6 +812,7 @@ TEST( NexusOptionalAbi, IXGameStreamingImpl3OriginalSlotsRemainCallable )
         auto call = reinterpret_cast<Function>( table[34] );
         EXPECT_EQ( call( object, {}, {} ), E_NOTIMPL );
     }
+    static_cast<IXGameStreamingImpl3 *>( object )->XGameStreamingUninitialize();
     object->Release();
 }
 

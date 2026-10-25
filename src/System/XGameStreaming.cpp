@@ -20,16 +20,25 @@
  */
 
 #include "XGameStreaming.h"
+#include <atomic>
+
+namespace
+{
+// Local desktop execution has no Xbox streaming clients. Keep a real API
+// lifecycle without claiming a remote stream, transport or callback source.
+std::atomic<bool> desktopInitialized{ false };
+}
 
 HRESULT WINAPI XGameStreamingImpl::XGameStreamingInitialize()
 {
-    NEXUS_STORE_META( 3, E_NOTIMPL, 0, nullptr );
-    return E_NOTIMPL;
+    desktopInitialized.store( true, std::memory_order_release );
+    NEXUS_STORE_META( 3, S_OK, 0, nullptr );
+    return S_OK;
 }
 
 void WINAPI XGameStreamingImpl::XGameStreamingUninitialize()
 {
-    ( void )0;
+    desktopInitialized.store( false, std::memory_order_release );
 }
 
 BOOLEAN WINAPI XGameStreamingImpl::XGameStreamingIsStreaming()
@@ -70,8 +79,11 @@ UINT32 WINAPI XGameStreamingImpl::XGameStreamingGetClientCount()
 HRESULT WINAPI XGameStreamingImpl::XGameStreamingGetClients( UINT32 clientCount, XGameStreamingClientId *clients,
                                                              UINT32 *clientsUsed )
 {
-    ( void )0;
-    return E_NOTIMPL;
+    if ( clientsUsed ) *clientsUsed = 0;
+    if ( !desktopInitialized.load( std::memory_order_acquire ) ) return E_GAMESTREAMING_NOT_INITIALIZED;
+    if ( clientCount && !clients ) return E_INVALIDARG;
+    // No client IDs exist and none of the caller's array is written.
+    return S_OK;
 }
 
 XGameStreamingConnectionState WINAPI
