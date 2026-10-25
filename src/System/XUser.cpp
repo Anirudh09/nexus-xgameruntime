@@ -846,7 +846,10 @@ HRESULT XUser::LoadEndpoints( const BYTE *buffer, SIZE_T size )
             ( endpointCursor + i )->policy = &( endpointCursor + i )->policyValue;
         }
         else if ( hr == WEB_E_JSON_VALUE_NOT_FOUND )
+        {
             ( endpointCursor + i )->policy = nullptr;
+            hr = S_OK;
+        }
         else
             goto cleanup;
         if ( SUCCEEDED( get_json_string( tmpObject, L"HostType", &hostType ) ) )
