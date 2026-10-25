@@ -40,6 +40,16 @@ test('all original raw migration assertions remain byte-identical',()=>{
     for(const [name,expected] of Object.entries(contract.probes))
         assert.equal(crypto.createHash('sha256').update(read('tests/Nexus/'+name)).digest('hex'),expected,name);
 });
+test('native work and timer callbacks retain their module without permanent pins',()=>{
+    for(const file of ['ThreadPool.cpp','WaitTimer.cpp']) {
+        const source=read('src/System/Threading/'+file);
+        assert.match(source,/SetThreadpoolCallbackLibrary\(&environment, module\)/);
+        assert.match(source,/GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT/);
+        assert.doesNotMatch(source,/GET_MODULE_HANDLE_EX_FLAG_PIN/);
+        assert.match(source,/DestroyThreadpoolEnvironment\(&environment\)/);
+    }
+    assert.match(read('scripts/test-component.mjs'),/package-close-unload-repeat/);
+});
 test('all upstream threading declarations remain present, including the 42 active cases',()=>{
     const names=[...read('tests/System/test_xthreading.cpp').matchAll(/TEST_F\(XThreadingTests,\s*(\w+)\)/g)].map(m=>m[1]);
     assert.equal(contract.upstreamDeclarations.length,45);

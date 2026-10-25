@@ -127,6 +127,15 @@ try {
         }
         if(name==='nexus_gamesave-files') execute('save-child-drain','wineserver',['-w']);
     }
+    // Keep the original fixture byte-identical. Repeated close/unload caught
+    // a native timer executing code from an already unloaded runtime DLL.
+    for(let iteration=0;iteration<12;iteration++) {
+        const out=execute('package-close-unload-'+iteration,'wine',[path.join(bin,'nexus_package-progress-bytes.exe')]);
+        const summaries=[...out.matchAll(/(?:^|\n)CHECKS (\d+) FAILURES (\d+)/g)];
+        if(!summaries.some(x=>Number(x[1])>=115)||summaries.some(x=>Number(x[2])!==0)||/^FAIL /m.test(out))
+            throw Error('Package close/unload lifetime regression');
+    }
+    proof.results.push({name:'package-close-unload-repeat',checks:12*115,failures:0});
     if (JSON.stringify(snapshot()) !== JSON.stringify(before)) throw Error('Component binaries changed during tests');
     if(hash(staged)!==before['xgameruntime.dll'])throw Error('Staged candidate changed');
     proof.unchanged = true;

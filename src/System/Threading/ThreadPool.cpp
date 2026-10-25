@@ -74,7 +74,19 @@ namespace OS
         {
             m_context = context;
             m_callback = callback;
-            m_work = CreateThreadpoolWork(TPCallback, this, nullptr);
+            // The native work object owns this reference until queued and
+            // running callbacks drain, including callbacks that delete us.
+            // Never pin the DLL permanently or wait under the loader lock.
+            HMODULE module;
+            TP_CALLBACK_ENVIRON environment;
+            if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                    reinterpret_cast<LPCWSTR>(TPCallback), &module))
+                return HRESULT_FROM_WIN32(GetLastError());
+            InitializeThreadpoolEnvironment(&environment);
+            SetThreadpoolCallbackLibrary(&environment, module);
+            m_work = CreateThreadpoolWork(TPCallback, this, &environment);
+            DestroyThreadpoolEnvironment(&environment);
             RETURN_LAST_ERROR_IF_NULL(m_work);
 
             return S_OK;
