@@ -57,6 +57,12 @@ static BOOLEAN GetFullTrust()
     return config && config->fullTrust;
 }
 
+static bool GetLegacyFullTrust()
+{
+    const auto *config = nexus::GetGameConfiguration();
+    return config && nexus::UsesLegacyFullTrust( *config );
+}
+
 #include "User/Privileges.h"
 
 static const WCHAR *ACCEPT_JSON[] = { L"application/json", NULL };

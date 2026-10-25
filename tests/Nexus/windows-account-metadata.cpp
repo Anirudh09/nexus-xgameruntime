@@ -99,6 +99,11 @@ static BOOL GetFullTrust()
 {
     return fullTrust;
 }
+static bool legacyFullTrust;
+static bool GetLegacyFullTrust()
+{
+    return legacyFullTrust;
+}
 static constexpr UINT16 XODUS_MSA_TOKEN_REQUEST = 3;
 class TicketTransport final : public UserTransport
 {
@@ -112,6 +117,10 @@ public:
                    request.name == "MSATokenRequest" );
         for ( const auto &child : request.children )
             CHECK( "ticket request has unchanged fields", !child.name.empty() && !child.text.empty() );
+        auto client = request.child( "ClientId" ), trust = request.child( "MSAFullTrust" );
+        CHECK( "explicit client or actual platform client, never a guessed title",
+               client && client->text == ( GetMsaAppId() ? GetMsaAppId() : "0000000040159362" ) );
+        CHECK( "full-trust scope is preserved", trust && trust->text == ( GetFullTrust() ? "true" : "false" ) );
         *response = nullptr;
         *length = 0;
         if ( FAILED( transport_result ) ) return transport_result;
@@ -200,6 +209,15 @@ static void ticket_cases( void )
     fullTrust = TRUE;
     CHECK( "missing full-trust game config still refused",
            get_rps_tickets( FALSE, &user, &device, a, b ) == E_GAME_MISSING_GAME_CONFIG );
+    legacyFullTrust = true;
+    CHECK( "legacy full-trust requests actual platform account tickets",
+           get_rps_tickets( FALSE, &user, &device, a, b ) == S_OK && user && device );
+    free( user ); free( device ); user = device = nullptr;
+    transport_result = E_ACCESSDENIED;
+    CHECK( "legacy full-trust never hides backend denial",
+           get_rps_tickets( FALSE, &user, &device, a, b ) == E_ACCESSDENIED && !user && !device );
+    transport_result = S_OK;
+    legacyFullTrust = false;
     fullTrust = FALSE;
     CHECK( "platform fallback still authenticates", get_rps_tickets( FALSE, &user, &device, a, b ) == S_OK );
     free( user );
