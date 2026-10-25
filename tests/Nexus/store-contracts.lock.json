@@ -311,6 +311,17 @@
       "runtime-invalid-query-handle"
     ],
     "addedChecks": [
+      "public-certificate-no-network-grant",
+      "public-certificate-request-captured",
+      "public-certificate-path-exact",
+      "public-certificate-remains-https",
+      "public-catalog-no-network-grant",
+      "public-catalog-request-captured",
+      "public-catalog-path-exact",
+      "public-catalog-remains-https",
+      "public-catalog-language-no-network-grant",
+      "public-catalog-language-request-captured",
+      "public-catalog-language-path-exact",
       "current-game-real-sku-and-proof-expiry",
       "current-game-no-fabricated-trial-or-disc",
       "current-game-no-proof-no-license",

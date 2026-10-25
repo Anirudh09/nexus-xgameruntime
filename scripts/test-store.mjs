@@ -34,7 +34,7 @@ try{
  const staged=path.join(system,'xgameruntime.dll'),temporary=staged+'.nexus-'+process.pid;
  fs.copyFileSync(path.join(bin,'xgameruntime.dll'),temporary,fs.constants.COPYFILE_EXCL);fs.renameSync(temporary,staged);
  if(fs.lstatSync(staged).isSymbolicLink()||hash(staged)!==before['xgameruntime.dll'])throw Error('Exact DLL staging failed');
- for(const [name,minimum]of [['store-entitlements',971],['package-content',332]]){
+ for(const [name,minimum]of [['store-entitlements',982],['package-content',332]]){
   const output=run(name,engine,[path.join(bin,'nexus_'+name+'.exe')]);
   const summary=output.match(/(?:^|\n)CHECKS (\d+) FAILURES (\d+)/);
   if(!summary||Number(summary[1])<minimum||Number(summary[2])||/(?:^|\n)FAIL /.test(output))throw Error(name+' lost required coverage');

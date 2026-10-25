@@ -43,8 +43,32 @@ static const char *GetStoreProductId()
 {
     return storeId;
 }
+/* Capture only synthetic public paths and stop before any network send. */
+static WCHAR public_path[256];
+static DWORD public_flags;
+static unsigned public_requests, public_sends;
+static HINTERNET WINAPI FixturePublicOpenRequest( HINTERNET connection, LPCWSTR verb, LPCWSTR path,
+                                                 LPCWSTR version, LPCWSTR referrer, LPCWSTR *accept, DWORD flags )
+{
+    ++public_requests;
+    public_flags = flags;
+    public_path[0] = 0;
+    if ( path && wcslen( path ) < ARRAY_SIZE( public_path ) ) wcscpy( public_path, path );
+    return WinHttpOpenRequest( connection, verb, path, version, referrer, accept, flags );
+}
+static BOOL WINAPI FixturePublicSendRequest( HINTERNET request, LPCWSTR headers, DWORD headers_size,
+                                            void *body, DWORD body_size, DWORD total_size, DWORD_PTR context )
+{
+    ++public_sends;
+    SetLastError( ERROR_CANCELLED );
+    return FALSE;
+}
 #define QueryApiImpl FixtureQueryApiImpl
+#define WinHttpOpenRequest FixturePublicOpenRequest
+#define WinHttpSendRequest FixturePublicSendRequest
 #include "../../src/System/Store/Entitled.h"
+#undef WinHttpOpenRequest
+#undef WinHttpSendRequest
 /* Only this account-free executable has a synthetic installed-package index. */
 HRESULT xpackage_query_content_store( const char *identifier, SIZE_T size, char *store )
 {
@@ -198,6 +222,17 @@ static void test_receipts( void )
         if ( !jwt ) continue;
         if ( !i )
         {
+            WCHAR expected[160] = L"/v8.0/licenseToken/fullCertificate/";
+            SIZE_T prefix = wcslen( expected );
+            for ( UINT j = 0; j <= 40; ++j ) expected[prefix + j] = ( unsigned char )cert_id[j];
+            public_requests = public_sends = 0;
+            IJsonObject *public_claim = nullptr;
+            UINT64 public_expiry = 0;
+            CHECK( "public-certificate-no-network-grant",
+                   FAILED( receipt_load( jwt, "synthetic-nonce", &public_claim, &public_expiry ) ) && !public_claim );
+            CHECK( "public-certificate-request-captured", public_requests == 1 && public_sends == 1 );
+            CHECK( "public-certificate-path-exact", !wcscmp( public_path, expected ) );
+            CHECK( "public-certificate-remains-https", public_flags == WINHTTP_FLAG_SECURE );
             BYTE *decoded = NULL;
             DWORD length = 0;
             const char *dot = strchr( jwt, '.' ), *second = strchr( dot + 1, '.' );
@@ -299,6 +334,18 @@ static struct entitled_snapshot *test_metadata( void )
     char until[32];
     struct entitled_snapshot *snapshot = NULL;
     xmlDocSetRootElement( doc, root );
+    public_requests = public_sends = 0;
+    CHECK( "public-catalog-no-network-grant", FAILED( receipt_metadata( &license, 31, "US", "en-US", root ) ) );
+    CHECK( "public-catalog-request-captured", public_requests == 1 && public_sends == 1 );
+    CHECK( "public-catalog-path-exact",
+           !wcscmp( public_path, L"/v7.0/products?bigIds=B00000000001&market=US&languages=en-US" ) );
+    CHECK( "public-catalog-remains-https", public_flags == WINHTTP_FLAG_SECURE );
+    public_requests = public_sends = 0;
+    CHECK( "public-catalog-language-no-network-grant",
+           FAILED( receipt_metadata( &license, 31, "CZ", "zh-Hans-CN", root ) ) );
+    CHECK( "public-catalog-language-request-captured", public_requests == 1 && public_sends == 1 );
+    CHECK( "public-catalog-language-path-exact",
+           !wcscmp( public_path, L"/v7.0/products?bigIds=B00000000001&market=CZ&languages=zh-Hans-CN" ) );
     xmlNewTextChild( root, NULL, BAD_CAST "HResult", BAD_CAST "0" );
     snprintf( until, sizeof( until ), "%llu", ( unsigned long long )time( NULL ) + 60 );
     xmlNewTextChild( root, NULL, BAD_CAST "ValidUntil", BAD_CAST until );
