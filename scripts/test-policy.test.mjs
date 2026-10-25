@@ -9,6 +9,28 @@ import {officialUbuntuMirrors} from './ci/ubuntu-mirror.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const read=name=>fs.readFileSync(path.join(root,name),'utf8');
 const contract=JSON.parse(read('tests/Nexus/contracts.lock.json'));
+test('launch path diagnostics are opt-in and never include command arguments or change launch resolution',()=>{
+    const source=read('src/System/XGame.cpp');
+    const helper=source.split('static void TraceLaunchPath(')[1].split('void WINAPI XGameImpl::XLaunchNewGame')[0];
+    assert.match(helper,/GetEnvironmentVariableA\( "NEXUS_LAUNCH_TRACE"/);
+    assert.match(helper,/== 1 && enabled\[0\] == '1'/);
+    assert.match(helper,/SetLastError\( saved \)/);
+    assert.match(helper,/target=%\.512ls cwd=%\.512ls/);
+    assert.doesNotMatch(helper,/\bargs\b|\bcommand\b|GetEnvironmentStrings|XODUS|XUSER/);
+    assert.match(source,/TraceLaunchPath\( executable \);\s*if \( !CreateProcessW\( executable, command, NULL, NULL, FALSE, 0, NULL, NULL/);
+});
+test('bare launch names resolve only current-directory first then caller sibling, never PATH or qualified-path fallback',()=>{
+    const source=read('src/System/XGame.cpp');
+    const helper=source.split('static WCHAR *FindSiblingExecutable(')[1].split('void WINAPI XGameImpl::XLaunchNewGame')[0];
+    assert.ok(helper.includes('wcspbrk( name, L"\\\\/:" )'));
+    assert.match(helper,/GetModuleFileNameW\( nullptr, path, 32768 \)/);
+    assert.match(helper,/attributes & FILE_ATTRIBUTE_DIRECTORY/);
+    assert.doesNotMatch(helper,/SearchPath|GetEnvironmentVariable|SetCurrentDirectory/);
+    assert.match(source,/error != ERROR_FILE_NOT_FOUND \|\| !\( sibling = FindSiblingExecutable\( executable \) \)/);
+    assert.match(read('scripts/test-component.mjs'),/\['nexus_game-relaunch-search', 116\]/);
+    const probe=read('tests/Nexus/game-relaunch-search-probe.c');
+    for(const label of ['exact-target-cwd-and-arguments','no-unintended-target','invalid-image-written','directory-not-executable','current-copy','cwd-qualified-copy'])assert.ok(probe.includes(label));
+});
 test('title presence is optional, genuine-claim-bound and supported by its launcher before requesting tokens',()=>{
     const source=read('src/System/User/Presence.cpp'),user=read('src/System/XUser.cpp');
     assert.ok(source.indexOf('"presence-ready"')<source.indexOf('const auto hr = Prepare('));
