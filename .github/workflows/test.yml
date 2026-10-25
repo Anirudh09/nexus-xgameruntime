@@ -45,7 +45,9 @@ jobs:
         run: node --test scripts/test-policy.test.mjs scripts/test-builtin.test.mjs
       - name: Compile C++ component and synthetic tests only
         run: |
-          cmake -S . -B build/component -DCMAKE_TOOLCHAIN_FILE=${{ matrix.arch }}-target.cmake -DENABLE_TESTS=ON -DNEXUS_MIGRATION_PROBES=ON -DNEXUS_WINE_SOURCE=$GITHUB_WORKSPACE/external/wine-source
+          # GCC 13 MinGW static libstdc++ has PR110572 in unoptimized C++23 RTTI.
+          # Optimize without Release/NDEBUG so every runtime assertion stays active.
+          cmake -S . -B build/component -DCMAKE_TOOLCHAIN_FILE=${{ matrix.arch }}-target.cmake -DCMAKE_CXX_FLAGS=-O2 -DENABLE_TESTS=ON -DNEXUS_MIGRATION_PROBES=ON -DNEXUS_WINE_SOURCE=$GITHUB_WORKSPACE/external/wine-source
           cmake --build build/component --parallel 4
       - name: Run account-free component contracts
         run: xvfb-run -a node scripts/test-component.mjs build/component

@@ -4,6 +4,13 @@
 #define CHUNKS_MAX 4096
 #define CHUNKS_TEXT_MAX 1024
 #define CHUNKS_FILES_MAX 65536
+#include <cstdio>
+
+struct chunk_group
+{
+    WCHAR pattern[MAX_PATH];
+    UINT chunk;
+};
 
 struct chunk_file
 {
@@ -25,6 +32,8 @@ struct chunk_snapshot
     BOOL track_sizes;
     UINT file_count, file_capacity;
     struct chunk_file *files;
+    UINT group_count, group_capacity;
+    struct chunk_group *file_groups;
     struct installed_chunk chunks[CHUNKS_MAX];
 };
 
@@ -36,6 +45,7 @@ static void chunks_free( struct chunk_snapshot *snapshot )
         for ( j = 0; j < 3; j++ )
             free( snapshot->chunks[i].attributes[j] );
     free( snapshot->files );
+    free( snapshot->file_groups );
     free( snapshot );
 }
 
@@ -215,20 +225,16 @@ static HRESULT chunks_record_file( struct chunk_snapshot *snapshot, UINT chunk, 
 }
 
 static HRESULT chunks_files( const WCHAR *root, xmlNodePtr chunk, struct chunk_snapshot *snapshot, UINT chunk_index,
-                             XPackageChunkAvailability *availability )
+                             XPackageChunkAvailability *availability, BOOL inspect_files )
 {
     xmlNodePtr node;
     char location[MAX_PATH], include[MAX_PATH];
     const char *relative;
     WCHAR wide[MAX_PATH], directory[MAX_PATH], pattern[MAX_PATH], file[MAX_PATH];
     WCHAR *p;
-    WIN32_FIND_DATAW data;
-    HANDLE find, readable;
-    UINT entries;
-    BOOL found;
-    LARGE_INTEGER size;
-    HRESULT hr;
-    *availability = XPackageChunkAvailability::Ready;
+    struct chunk_group *groups, *group;
+    UINT capacity;
+    *availability = inspect_files ? XPackageChunkAvailability::Ready : XPackageChunkAvailability::Unavailable;
     for ( node = chunk->children; node; node = node->next )
     {
         if ( node->type != XML_ELEMENT_NODE ) continue;
@@ -257,61 +263,147 @@ static HRESULT chunks_files( const WCHAR *root, xmlNodePtr chunk, struct chunk_s
         for ( p = wide; *p; p++ )
             if ( *p == '/' ) *p = '\\';
         if ( !content_join( directory, wide, pattern ) ) return HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
-        if ( ( find = FindFirstFileW( pattern, &data ) ) == INVALID_HANDLE_VALUE )
+        /* Validate every declaration, even outside the requested selection.
+         * Only selected chunks may contribute to a monitor's availability or
+         * byte total, so unrelated file opens cannot improve that snapshot. */
+        if ( !inspect_files ) continue;
+        if ( snapshot->group_count == snapshot->group_capacity )
         {
-            *availability = XPackageChunkAvailability::Unavailable;
-            continue;
+            capacity = snapshot->group_capacity ? snapshot->group_capacity * 2 : 64;
+            if ( !( groups =
+                        static_cast<chunk_group *>( realloc( snapshot->file_groups, capacity * sizeof( *groups ) ) ) ) )
+                return E_OUTOFMEMORY;
+            snapshot->file_groups = groups;
+            snapshot->group_capacity = capacity;
         }
-        found = FALSE;
-        entries = 0;
-        do
+        group = &snapshot->file_groups[snapshot->group_count++];
+        wcscpy( group->pattern, pattern );
+        group->chunk = chunk_index;
+    }
+    return S_OK;
+}
+
+/* A hint changes inspection order, never availability. It is used only after
+ * re-reading and validating the current layout, and only if its full pattern
+ * is still part of this selection. Every use re-opens the actual filesystem.
+ * One bounded process-local entry avoids a cache of package or account state.
+ */
+static SRWLOCK chunks_hint_lock = SRWLOCK_INIT;
+static WCHAR chunks_hint[MAX_PATH];
+static LONG chunks_warnings;
+
+static void chunks_remember_missing( const WCHAR *pattern )
+{
+    BOOL changed;
+    AcquireSRWLockExclusive( &chunks_hint_lock );
+    changed = wcsicmp( chunks_hint, pattern ) != 0;
+    wcscpy( chunks_hint, pattern );
+    ReleaseSRWLockExclusive( &chunks_hint_lock );
+    if ( changed && InterlockedIncrement( &chunks_warnings ) <= 8 )
+        std::fprintf( stderr, "NEXUS_PACKAGE_DIAGNOSTIC_V1 missing-or-unreadable: "
+                              "required package files are "
+                              "missing or unreadable. Restore removed files or "
+                              "repair the installation.\n" );
+}
+
+static HRESULT chunks_inspect_group( struct chunk_snapshot *snapshot, UINT index )
+{
+    const struct chunk_group *group = &snapshot->file_groups[index];
+    XPackageChunkAvailability *availability =
+        group->chunk == CHUNKS_MAX ? &snapshot->registration : &snapshot->chunks[group->chunk].availability;
+    WIN32_FIND_DATAW data;
+    HANDLE find, readable;
+    LARGE_INTEGER size;
+    WCHAR file[MAX_PATH], *leaf;
+    UINT entries = 0;
+    BOOL found = FALSE;
+    HRESULT hr = S_OK;
+    if ( ( find = FindFirstFileW( group->pattern, &data ) ) == INVALID_HANDLE_VALUE )
+    {
+        *availability = XPackageChunkAvailability::Unavailable;
+        return S_OK;
+    }
+    do
+    {
+        if ( ++entries > 16384 )
         {
-            if ( ++entries > 16384 )
+            hr = HRESULT_FROM_WIN32( ERROR_MORE_DATA );
+            break;
+        }
+        if ( data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ) continue;
+        found = TRUE;
+        /* Include can contain a relative subdirectory before its leaf. */
+        wcscpy( file, group->pattern );
+        if ( ( leaf = wcsrchr( file, '\\' ) ) )
+            leaf[1] = 0;
+        else
+        {
+            hr = HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
+            break;
+        }
+        if ( wcslen( file ) + wcslen( data.cFileName ) >= MAX_PATH )
+        {
+            hr = HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
+            break;
+        }
+        wcscat( file, data.cFileName );
+        readable = CreateFileW( file, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL );
+        if ( readable == INVALID_HANDLE_VALUE )
+            *availability = XPackageChunkAvailability::Unavailable;
+        else
+        {
+            hr = S_OK;
+            if ( snapshot->track_sizes )
             {
-                FindClose( find );
-                return HRESULT_FROM_WIN32( ERROR_MORE_DATA );
+                if ( !GetFileSizeEx( readable, &size ) || size.QuadPart < 0 )
+                    *availability = XPackageChunkAvailability::Unavailable;
+                else
+                    hr = chunks_record_file( snapshot, group->chunk, file, size.QuadPart );
             }
-            if ( data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ) continue;
-            found = TRUE;
-            /* Include can contain a relative subdirectory before its leaf. */
-            wcscpy( file, pattern );
-            if ( wcsrchr( file, '\\' ) )
-                *( wcsrchr( file, '\\' ) + 1 ) = 0;
-            else
-            {
-                FindClose( find );
-                return HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
-            }
-            if ( wcslen( file ) + wcslen( data.cFileName ) >= MAX_PATH )
-            {
-                FindClose( find );
-                return HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
-            }
-            wcscat( file, data.cFileName );
-            readable = CreateFileW( file, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
-                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL );
-            if ( readable == INVALID_HANDLE_VALUE )
-                *availability = XPackageChunkAvailability::Unavailable;
-            else
-            {
-                hr = S_OK;
-                if ( snapshot->track_sizes )
+            CloseHandle( readable );
+        }
+        if ( FAILED( hr ) || ( snapshot->track_sizes && *availability != XPackageChunkAvailability::Ready ) ) break;
+    } while ( FindNextFileW( find, &data ) );
+    FindClose( find );
+    if ( !found ) *availability = XPackageChunkAvailability::Unavailable;
+    return hr;
+}
+
+static HRESULT chunks_inspect_files( struct chunk_snapshot *snapshot )
+{
+    WCHAR hint[MAX_PATH];
+    UINT i, first = snapshot->group_count;
+    HRESULT hr;
+    /* Availability enumeration still inspects each requested chunk separately.
+     * A monitor reports unknown totals as soon as ANY required group is absent,
+     * so checking the remaining groups cannot improve that incomplete result. */
+    if ( snapshot->track_sizes )
+    {
+        AcquireSRWLockShared( &chunks_hint_lock );
+        wcscpy( hint, chunks_hint );
+        ReleaseSRWLockShared( &chunks_hint_lock );
+        if ( hint[0] )
+            for ( i = 0; i < snapshot->group_count; i++ )
+                if ( !wcsicmp( hint, snapshot->file_groups[i].pattern ) )
                 {
-                    if ( !GetFileSizeEx( readable, &size ) || size.QuadPart < 0 )
-                        *availability = XPackageChunkAvailability::Unavailable;
-                    else
-                        hr = chunks_record_file( snapshot, chunk_index, file, size.QuadPart );
+                    first = i;
+                    break;
                 }
-                CloseHandle( readable );
-                if ( FAILED( hr ) )
-                {
-                    FindClose( find );
-                    return hr;
-                }
-            }
-        } while ( FindNextFileW( find, &data ) );
-        FindClose( find );
-        if ( !found ) *availability = XPackageChunkAvailability::Unavailable;
+    }
+    for ( i = 0; i <= snapshot->group_count; i++ )
+    {
+        const UINT index = i ? i - 1 : first;
+        if ( index == snapshot->group_count || ( i && index == first ) ) continue;
+        const struct chunk_group *group = &snapshot->file_groups[index];
+        if ( FAILED( hr = chunks_inspect_group( snapshot, index ) ) ) return hr;
+        const auto available =
+            group->chunk == CHUNKS_MAX ? snapshot->registration : snapshot->chunks[group->chunk].availability;
+        if ( snapshot->track_sizes && available != XPackageChunkAvailability::Ready )
+        {
+            chunks_remember_missing( group->pattern );
+            return S_OK;
+        }
     }
     return S_OK;
 }
@@ -368,19 +460,46 @@ static HRESULT chunks_features( struct chunk_snapshot *snapshot, xmlNodePtr root
     return S_OK;
 }
 
-static HRESULT chunks_load( const char *identifier, BOOL track_sizes, struct chunk_snapshot **out )
+static BOOL chunks_selected( const struct installed_chunk *chunk, UINT32 count,
+                              const XPackageChunkSelector *selectors )
+{
+    if ( !count ) return TRUE;
+    for ( UINT32 i = 0; i < count; i++ )
+    {
+        const XPackageChunkSelector *selector = &selectors[i];
+        if ( selector->type == XPackageChunkSelectorType::Chunk )
+        {
+            if ( chunk->id == selector->chunkId ) return TRUE;
+        }
+        else
+        {
+            int attribute = selector->type == XPackageChunkSelectorType::Language ? 0
+                            : selector->type == XPackageChunkSelectorType::Tag    ? 1
+                                                                                  : 2;
+            if ( !chunk->attributes[attribute] ||
+                 chunks_contains( chunk->attributes[attribute], selector->language, attribute == 0 ) )
+                return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static HRESULT chunks_load( const char *identifier, BOOL track_sizes, struct chunk_snapshot **out,
+                            UINT32 selector_count = 0, const XPackageChunkSelector *selectors = NULL )
 {
     WCHAR path[MAX_PATH], pattern[MAX_PATH], file[MAX_PATH];
     WIN32_FIND_DATAW data;
     HANDLE find;
     xmlDocPtr doc = NULL;
     xmlNodePtr root, node;
+    xmlNodePtr registration_node = NULL, chunk_nodes[CHUNKS_MAX] = { 0 };
     struct chunk_snapshot *snapshot;
     char candidate[33], id[64];
     UINT layouts = 0, i;
     BOOL registration = FALSE, layout_valid = TRUE;
     HRESULT hr;
     *out = NULL;
+    if ( selector_count > CHUNKS_MAX || ( selector_count && !selectors ) ) return E_INVALIDARG;
     if ( FAILED( hr = chunks_resolve( identifier, path ) ) ) return hr;
     if ( !( snapshot =
                 static_cast<std::remove_reference_t<decltype( snapshot )>>( calloc( 1, sizeof( *snapshot ) ) ) ) )
@@ -418,8 +537,7 @@ static HRESULT chunks_load( const char *identifier, BOOL track_sizes, struct chu
         {
             if ( registration ) goto done;
             registration = TRUE;
-            if ( FAILED( hr = chunks_files( path, node, snapshot, CHUNKS_MAX, &snapshot->registration ) ) ) goto done;
-            hr = HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
+            registration_node = node;
             continue;
         }
         if ( snapshot->count == CHUNKS_MAX )
@@ -428,17 +546,28 @@ static HRESULT chunks_load( const char *identifier, BOOL track_sizes, struct chu
             goto done;
         }
         chunk = &snapshot->chunks[snapshot->count++];
+        chunk_nodes[snapshot->count - 1] = node;
         if ( !chunks_number( id, &chunk->id ) ) goto done;
         for ( i = 0; i + 1 < snapshot->count; i++ )
             if ( snapshot->chunks[i].id == chunk->id ) goto done;
         if ( FAILED( hr = chunks_attribute( node, "Languages", &chunk->attributes[0] ) ) ||
              FAILED( hr = chunks_attribute( node, "Tags", &chunk->attributes[1] ) ) ||
-             FAILED( hr = chunks_attribute( node, "Features", &chunk->attributes[2] ) ) ||
-             FAILED( hr = chunks_files( path, node, snapshot, snapshot->count - 1, &chunk->availability ) ) )
+             FAILED( hr = chunks_attribute( node, "Features", &chunk->attributes[2] ) ) )
             goto done;
         hr = HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
     }
     if ( FAILED( hr = chunks_features( snapshot, root ) ) ) goto done;
+    /* Feature selectors can be derived from tags. Resolve all attributes
+     * before deciding which files the caller actually needs to inspect.
+     * There is no persistent snapshot: every refresh rechecks selected files. */
+    if ( registration_node &&
+         FAILED( hr = chunks_files( path, registration_node, snapshot, CHUNKS_MAX, &snapshot->registration, TRUE ) ) )
+        goto done;
+    for ( i = 0; i < snapshot->count; i++ )
+        if ( FAILED( hr = chunks_files( path, chunk_nodes[i], snapshot, i, &snapshot->chunks[i].availability,
+                                        chunks_selected( &snapshot->chunks[i], selector_count, selectors ) ) ) )
+            goto done;
+    if ( FAILED( hr = chunks_inspect_files( snapshot ) ) ) goto done;
     *out = snapshot;
     snapshot = NULL;
     hr = S_OK;

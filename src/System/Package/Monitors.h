@@ -8,7 +8,7 @@ struct installation_monitor
     BOOL closed, refresh_pending, notifying;
     SRWLOCK refresh_lock;
     char identifier[33];
-    UINT32 count, interval;
+    UINT32 count, interval, unchanged;
     XPackageChunkSelector *selectors;
     XPackageInstallationProgress progress;
     UINT64 revision;
@@ -94,7 +94,8 @@ static HRESULT installation_snapshot( struct installation_monitor *monitor, XPac
     memset( progress, 0, sizeof( *progress ) );
     /* The SDK uses UINT64_MAX, not zero, while an install total is unknown. */
     progress->totalBytes = ~( UINT64 )0;
-    if ( FAILED( hr = chunks_load( monitor->identifier, TRUE, &snapshot ) ) ) return hr;
+    if ( FAILED( hr = chunks_load( monitor->identifier, TRUE, &snapshot, monitor->count, monitor->selectors ) ) )
+        return hr;
     ready = snapshot->registration == XPackageChunkAvailability::Ready;
     if ( !monitor->count )
     {
@@ -175,8 +176,11 @@ static HRESULT installation_refresh( struct installation_monitor *monitor )
            monitor->progress.launchBytes != progress.launchBytes ) )
     {
         monitor->progress = progress;
+        monitor->unchanged = 0;
         ++monitor->revision;
     }
+    else if ( !monitor->closed && !progress.completed && monitor->unchanged < 3 )
+        ++monitor->unchanged;
     ReleaseSRWLockExclusive( &installation_lock );
     ReleaseSRWLockExclusive( &monitor->refresh_lock );
     return hr;
@@ -294,7 +298,17 @@ static void installation_schedule( struct installation_monitor *monitor )
 {
     BOOL schedule;
     HRESULT hr;
+    UINT64 delay;
     AcquireSRWLockExclusive( &installation_lock );
+    /* No progress may be polled more slowly than the requested minimum, but
+     * never stop watching missing content. Explicit Update remains immediate.
+     * Bound the extra delay to five seconds and preserve larger caller minima. */
+    delay = monitor->interval;
+    if ( delay < 5000 )
+    {
+        delay <<= monitor->unchanged;
+        if ( delay > 5000 ) delay = 5000;
+    }
     schedule = !monitor->closed && monitor->interval && !monitor->progress.completed && !monitor->refresh_pending;
     if ( schedule )
     {
@@ -304,7 +318,7 @@ static void installation_schedule( struct installation_monitor *monitor )
     ReleaseSRWLockExclusive( &installation_lock );
     if ( !schedule ) return;
     hr = ( x_threading_impl )
-             ->XTaskQueueSubmitDelayedCallback( monitor->poll_queue, XTaskQueuePort::Work, monitor->interval, monitor,
+             ->XTaskQueueSubmitDelayedCallback( monitor->poll_queue, XTaskQueuePort::Work, ( UINT32 )delay, monitor,
                                                 installation_poll );
     if ( FAILED( hr ) )
     {

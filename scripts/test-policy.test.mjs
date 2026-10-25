@@ -9,10 +9,79 @@ import {officialUbuntuMirrors} from './ci/ubuntu-mirror.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const read=name=>fs.readFileSync(path.join(root,name),'utf8');
 const contract=JSON.parse(read('tests/Nexus/contracts.lock.json'));
+test('launch path diagnostics are opt-in and never include command arguments or change launch resolution',()=>{
+    const source=read('src/System/XGame.cpp');
+    const helper=source.split('static void TraceLaunchPath(')[1].split('void WINAPI XGameImpl::XLaunchNewGame')[0];
+    assert.match(helper,/GetEnvironmentVariableA\( "NEXUS_LAUNCH_TRACE"/);
+    assert.match(helper,/== 1 && enabled\[0\] == '1'/);
+    assert.match(helper,/SetLastError\( saved \)/);
+    assert.match(helper,/target=%\.512ls cwd=%\.512ls/);
+    assert.doesNotMatch(helper,/\bargs\b|\bcommand\b|GetEnvironmentStrings|XODUS|XUSER/);
+    assert.match(source,/TraceLaunchPath\( executable \);\s*if \( !CreateProcessW\( executable, command, NULL, NULL, FALSE, 0, NULL, NULL/);
+});
+test('bare launch names resolve only current-directory first then caller sibling, never PATH or qualified-path fallback',()=>{
+    const source=read('src/System/XGame.cpp');
+    const helper=source.split('static WCHAR *FindSiblingExecutable(')[1].split('void WINAPI XGameImpl::XLaunchNewGame')[0];
+    assert.ok(helper.includes('wcspbrk( name, L"\\\\/:" )'));
+    assert.match(helper,/GetModuleFileNameW\( nullptr, path, 32768 \)/);
+    assert.match(helper,/attributes & FILE_ATTRIBUTE_DIRECTORY/);
+    assert.doesNotMatch(helper,/SearchPath|GetEnvironmentVariable|SetCurrentDirectory/);
+    assert.match(source,/error != ERROR_FILE_NOT_FOUND \|\| !\( sibling = FindSiblingExecutable\( executable \) \)/);
+    assert.match(read('scripts/test-component.mjs'),/\['nexus_game-relaunch-search', 116\]/);
+    const probe=read('tests/Nexus/game-relaunch-search-probe.c');
+    for(const label of ['exact-target-cwd-and-arguments','no-unintended-target','invalid-image-written','directory-not-executable','current-copy','cwd-qualified-copy'])assert.ok(probe.includes(label));
+});
+test('title presence is optional, genuine-claim-bound and supported by its launcher before requesting tokens',()=>{
+    const source=read('src/System/User/Presence.cpp'),user=read('src/System/XUser.cpp');
+    assert.ok(source.indexOf('"presence-ready"')<source.indexOf('const auto hr = Prepare('));
+    assert.match(source,/generation == worker->generation && xuser_is_current_user\( worker->user \)/);
+    assert.match(source,/SecureZeroMemory/);assert.match(source,/FreeLibraryAndExitThread/);
+    assert.match(user,/SUCCEEDED\( hr \) && \*newUser \) nexus::presence::Start/);
+    assert.match(user,/presence && \( !title \|\| !user->titleToken/);
+    assert.match(user,/actual != user->xuid/);
+    assert.ok(source.includes('\\"state\\":\\"active\\"'));
+    for(const value of ['UsesGenuineTitleDeviceAndMatchingUserAndSignsOnlyCurrentTitle','MissingTitleTokenNeverFallsBackToOrdinaryUserAuthorization','WrongMalformedOrMissingAuthenticatedIdentityNeverPublishes','MissingEndpointOrUnsupportedPolicyFailsClosedWithoutBreakingLogin','DenialCancelledAndInvalidInputsHaveNoPresenceSideEffects'])assert.ok(read('scripts/test-authentication.mjs').includes(value));
+});
+test('installation selectors retain whole-layout validation and live file checks without a stale cache',()=>{
+    const chunks=read('src/System/Package/Chunks.h'),monitor=read('src/System/Package/Monitors.h');
+    assert.match(monitor,/chunks_load\( monitor->identifier, TRUE, &snapshot, monitor->count, monitor->selectors \)/);
+    assert.ok(chunks.indexOf('chunks_features( snapshot, root )')<chunks.indexOf('chunks_selected( &snapshot->chunks[i]'));
+    assert.ok(chunks.indexOf('if ( !inspect_files ) continue;')>chunks.indexOf('!content_relative( relative, FALSE )'));
+    assert.match(chunks,/&snapshot->registration, TRUE/);
+    assert.match(chunks,/inspect_files \? XPackageChunkAvailability::Ready : XPackageChunkAvailability::Unavailable/);
+    assert.match(chunks,/CreateFileW\( file, GENERIC_READ/);
+    assert.match(chunks,/GetFileSizeEx\( readable/);
+    assert.match(read('tests/CMakeLists.txt'),/package-progress-bytes package-selection/);
+    assert.match(read('scripts/test-component.mjs'),/selection-file-opens/);
+    const probe=read('tests/Nexus/package-selection-probe.c');
+    for(const label of ['selected-locked-refresh','deleted-refresh','replace-refresh','resize-refresh','invalid-refresh','concurrent-refresh','invalid-unselected-metadata-rejected'])assert.ok(probe.includes('"'+label+'"'));
+});
+test('incomplete hints reorder live checks only after validating all declarations',()=>{
+    const source=read('src/System/Package/Chunks.h'),monitor=read('src/System/Package/Monitors.h');
+    assert.ok(source.indexOf('chunks_inspect_files( snapshot )')>source.lastIndexOf('chunks_files( path, chunk_nodes[i]'));
+    assert.match(source,/wcsicmp\( hint, snapshot->file_groups\[i\]\.pattern \)/);
+    assert.match(source,/chunks_inspect_group\( snapshot, index \)/);
+    assert.match(monitor,/if \( delay > 5000 \) delay = 5000/);
+    assert.match(monitor,/monitor->unchanged = 0/);
+    assert.match(monitor,/monitor->unchanged < 3/);
+    assert.match(read('scripts/test-component.mjs'),/repeated-incomplete-file-opens/);
+    for(const label of ['unchanged-missing-refresh','restoration-rechecks-other-files','missing-hint-does-not-hide-invalid-layout','changed-layout-drops-old-blocker'])
+        assert.ok(read('tests/Nexus/package-selection-probe.c').includes('"'+label+'"'));
+});
 test('all original raw migration assertions remain byte-identical',()=>{
     assert.equal(Object.keys(contract.probes).length,6);
     for(const [name,expected] of Object.entries(contract.probes))
         assert.equal(crypto.createHash('sha256').update(read('tests/Nexus/'+name)).digest('hex'),expected,name);
+});
+test('native work and timer callbacks retain their module without permanent pins',()=>{
+    for(const file of ['ThreadPool.cpp','WaitTimer.cpp']) {
+        const source=read('src/System/Threading/'+file);
+        assert.match(source,/SetThreadpoolCallbackLibrary\(&environment, module\)/);
+        assert.match(source,/GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT/);
+        assert.doesNotMatch(source,/GET_MODULE_HANDLE_EX_FLAG_PIN/);
+        assert.match(source,/DestroyThreadpoolEnvironment\(&environment\)/);
+    }
+    assert.match(read('scripts/test-component.mjs'),/package-close-unload-repeat/);
 });
 test('all upstream threading declarations remain present, including the 42 active cases',()=>{
     const names=[...read('tests/System/test_xthreading.cpp').matchAll(/TEST_F\(XThreadingTests,\s*(\w+)\)/g)].map(m=>m[1]);
@@ -32,6 +101,8 @@ test('component CI cannot package, publish or imply complete runtime validation'
     const workflow=read('.github/workflows/test.yml');
     assert.match(workflow,/arch: \[win64, win32\]/);
     assert.match(workflow,/-DNEXUS_MIGRATION_PROBES=ON/);
+    assert.match(workflow,/-DCMAKE_CXX_FLAGS=-O2/);
+    assert.doesNotMatch(workflow,/-DNDEBUG|-fno-rtti|allow-multiple-definition|CMAKE_BUILD_TYPE=Release/);
     assert.match(workflow,/scripts\/test-component\.mjs/);
     assert.doesNotMatch(workflow,/gh release|build-proton|package-candidate|release-validation|secrets\./);
     assert.match(read('scripts/test-component.mjs'),/completeRuntime: false/);
@@ -132,6 +203,24 @@ test('save result APIs never inspect opaque async storage or share operation ide
     assert.match(read('scripts/test-saves.mjs'),/Number\(match\[1\]\)>=6/);
 });
 
+test('atomic file saves construct a full wide sibling path without CRT formatting',()=>{
+    const source=read('src/System/GameSave/Files.h');
+    const write=source.slice(source.indexOf('static HRESULT files_write('),source.indexOf('/* Enumerate each complete parent'));
+    assert.doesNotMatch(write,/swprintf/);
+    assert.match(write,/length \+ 5 >= ARRAY_SIZE\( temp \)/);
+    assert.match(write,/memcpy\( temp, wide, length \* sizeof\( WCHAR \) \)/);
+    assert.match(write,/memcpy\( temp \+ length, L"\.tmp", sizeof\( L"\.tmp" \) \)/);
+    assert.match(write,/CREATE_NEW/);
+    assert.match(write,/FlushFileBuffers/);
+    assert.match(write,/MOVEFILE_REPLACE_EXISTING \| MOVEFILE_WRITE_THROUGH/);
+    const fixture=read('tests/Nexus/gamesave-file-paths.cpp');
+    assert.match(fixture,/#include "gamesave-transfer.cpp"/);
+    for(const label of ['write-unicode-away-from-cwd','replace-away-from-cwd','empty-write','readonly-replacement-fails','foreign-temporary-not-overwritten','parallel-independent-cwd','long-path-rejected','closed-synthetic-transport'])
+        assert.ok(fixture.includes('"'+label+'"'),label);
+    assert.match(read('scripts/test-component.mjs'),/\['nexus_gamesave-file-paths', 55\]/);
+    assert.match(read('tests/CMakeLists.txt'),/add_executable\(nexus_gamesave-file-paths Nexus\/gamesave-file-paths.cpp\)/);
+});
+
 test('versioned private COM declarations must not collapse independent C++ virtual slots',()=>{
     const interfaces={};
     for(const file of fs.readdirSync(path.join(root,'include')).filter(x=>x.endsWith('.idl')))
@@ -185,8 +274,25 @@ test('current game licenses require proof-bound genuine SKU and support safe can
     assert.doesNotMatch(source,/4102444800|0010|isActive\s*=\s*TRUE[\s\S]*return E_NOTIMPL/);
     assert.match(read('src/System/Store/Entitled.h').replace(/\s+/g,''),/InterlockedCompareExchange\(&context->terminal,1,0\)/);
     assert.match(read('tests/Nexus/store-entitlements.cpp').replace(/\s+/g,''),/VirtualFree\(block,0,MEM_RELEASE\)/);
-    assert.match(read('scripts/test-store.mjs'),/\['store-entitlements',971\]/);
+    assert.match(read('scripts/test-store.mjs'),/\['store-entitlements',982\]/);
     assert.match(read('scripts/test-store.mjs'),/realAccounts:false,realCloud:false,fullRuntime:false/);
+});
+
+test('public Store URL regressions capture exact paths without sending requests or changing trust',()=>{
+    const source=read('src/System/Store/Receipts.h');
+    assert.doesNotMatch(source,/L"[^"\n]*%S/);
+    assert.match(source,/fullCertificate\/%hs/);
+    assert.match(source,/bigIds=%hs&market=%hs&languages=%hs/);
+    const fixture=read('tests/Nexus/store-entitlements.cpp');
+    assert.match(fixture,/#define WinHttpSendRequest FixturePublicSendRequest/);
+    const send=fixture.split('static BOOL WINAPI FixturePublicSendRequest')[1].split('#define QueryApiImpl')[0];
+    assert.match(send,/SetLastError\( ERROR_CANCELLED \)/);
+    assert.match(send,/return FALSE/);
+    assert.doesNotMatch(send,/WinHttpSendRequest\(/);
+    assert.match(fixture,/public-certificate-path-exact/);
+    assert.match(fixture,/public-catalog-language-path-exact/);
+    assert.match(source,/BCryptVerifySignature/);
+    assert.match(source,/strcmp\( challenge, nonce \)/);
 });
 
 test('relaunch and async-provider contracts remain byte-identical and account-free',()=>{
@@ -207,6 +313,28 @@ test('optional API families use actual C++ providers without fabricated availabi
         assert.match(source,/token->token\s*=\s*0/);
     }
     assert.match(read('tests/Nexus/test_optional_providers.cpp'),/DisplayAndLauncherShareCanonicalIUnknown/);
+});
+
+test('invitations bind actual runtime user, service session and queued activation without protocol execution',()=>{
+    const network=read('src/System/GameInvite/Network.cpp'),events=read('src/System/GameInvite/Events.cpp'),ui=read('src/System/GameInvite/Ui.cpp');
+    assert.match(network,/XUserGetTokenAndSignatureAsync/);
+    assert.match(network,/xuser_is_current_user/);
+    assert.match(network,/https:\/\/sessiondirectory\.xboxlive\.com\/handles/);
+    assert.match(network,/activities\/query/);
+    assert.match(network,/WinHttpWebSocketCompleteUpgrade/);
+    assert.match(network,/WINHTTP_FLAG_ASYNC/);
+    assert.match(network,/state->outgoing = frame/);
+    assert.doesNotMatch(network,/SECURITY_FLAG_IGNORE|WINHTTP_OPTION_SECURITY_FLAGS|WINHTTP_OPTION_RECEIVE_TIMEOUT/);
+    assert.match(events,/XTaskQueuePort::Completion/);
+    assert.match(events,/currentRegistration != registration.get\(\)/);
+    assert.match(ui,/GetAsyncStatusForIdentity\( async, &inviteIdentity/);
+    assert.match(ui,/GetAsyncStatusForIdentity\( async, &activityIdentity/);
+    assert.match(ui,/CloseHandle\( thread \);\s*return E_PENDING;/);
+    assert.doesNotMatch(network+events+ui,/ShellExecute|TerminateThread|GET_MODULE_HANDLE_EX_FLAG_PIN/);
+    assert.match(read('src/System/XGameRuntimeFeature.cpp'),/case XGameRuntimeFeature::XGameInvite:\s*return nexus::invites::BridgeAvailable\(\)/);
+    assert.match(read('scripts/test-component.mjs'),/\['nexus_game-invitations', 56, \['--component'\]\]/);
+    assert.match(read('scripts/test-user-contracts.mjs'),/\['game-invitations',86\]/);
+    assert.match(read('tests/Nexus/game-invitations.cpp'),/else \{ Callbacks\(\); Requests\(\); Incoming\(\); Dialogs\(\); UnregisterWait\(\); \}/);
 });
 
 test('the C++ runtime preserves the explicit cloud shutdown drain outside DllMain',()=>{
@@ -255,6 +383,19 @@ test('numeric auth privacy assertions remain and bounded retry uses the actual C
     assert.match(read('src/System/XUser.cpp'),/attempt < 5/);
     assert.match(read('src/System/User/Transport.h'),/WaitForSignInRetry/);
     assert.match(read('tests/Nexus/test_user.cpp'),/SignInRetryKeepsFiveAttemptBoundAndNumericDiagnostics/);
+});
+
+test('desktop streaming lifecycle never advertises remote streaming support or writes client IDs',()=>{
+    const source=read('src/System/XGameStreaming.cpp');
+    assert.match(source,/std::atomic<bool> desktopInitialized/);
+    assert.match(source,/desktopInitialized\.store\( true, std::memory_order_release \)/);
+    assert.match(source,/desktopInitialized\.store\( false, std::memory_order_release \)/);
+    assert.match(source,/if \( clientsUsed \) \*clientsUsed = 0/);
+    assert.match(source,/return E_GAMESTREAMING_NOT_INITIALIZED/);
+    const features=read('src/System/XGameRuntimeFeature.cpp');
+    assert.doesNotMatch(features,/case XGameRuntimeFeature::XGameStreaming:/);
+    assert.match(read('tests/Nexus/test_optional_providers.cpp'),/ConcurrentInitializationAndTeardownNeverInventClients/);
+    assert.match(read('scripts/test-component.mjs'),/Number\(match\[1\]\) < 76/);
 });
 
 test('WinRT-dependent privilege validation has a separate matching-engine gate',()=>{

@@ -328,7 +328,12 @@ static HRESULT receipt_load( const char *jwt, const char *nonce, IJsonObject **c
     if ( i > 64 || i == decoded_size || FAILED( receipt_json( decoded + i, decoded_size - i, &data ) ) ) goto done;
     id = receipt_string( data, L"certificateId", 40 );
     if ( !receipt_cert_id( id ) ) goto done;
-    swprintf( path, ARRAY_SIZE( path ), L"/v8.0/licenseToken/fullCertificate/%S", id );
+    /* Explicit narrow arguments, independent of the CRT's wide %S convention. */
+    if ( swprintf( path, ARRAY_SIZE( path ), L"/v8.0/licenseToken/fullCertificate/%hs", id ) < 0 )
+    {
+        hr = E_UNEXPECTED;
+        goto done;
+    }
     if ( FAILED( hr = receipt_public_get( L"licensing.mp.microsoft.com", path, 64000, &document, &size ) ) ) goto done;
     /* The current official endpoint returns {certificate:base64-DER}. */
     hr = E_ACCESSDENIED;
@@ -599,8 +604,9 @@ static HRESULT receipt_metadata( struct receipt_license *license, UINT32 kinds, 
     BYTE *bytes = NULL;
     SIZE_T size;
     HRESULT hr;
-    swprintf( path, ARRAY_SIZE( path ), L"/v7.0/products?bigIds=%S&market=%S&languages=%S", license->id, market,
-              language );
+    if ( swprintf( path, ARRAY_SIZE( path ), L"/v7.0/products?bigIds=%hs&market=%hs&languages=%hs", license->id,
+                   market, language ) < 0 )
+        return E_UNEXPECTED;
     hr = receipt_public_get( L"displaycatalog.mp.microsoft.com", path, 4 * 1024 * 1024, &bytes, &size );
     if ( SUCCEEDED( hr ) ) hr = receipt_metadata_parse( license, kinds, bytes, size, root );
     free( bytes );

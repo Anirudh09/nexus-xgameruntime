@@ -153,8 +153,10 @@ static HRESULT files_write( const char *path, const BYTE *data, SIZE_T size )
     DWORD count;
     HANDLE file;
     if ( FAILED( hr = files_wide( path, wide ) ) ) return hr;
-    if ( wcslen( wide ) + 5 >= ARRAY_SIZE( temp ) ) return HRESULT_FROM_WIN32( ERROR_FILENAME_EXCED_RANGE );
-    swprintf( temp, ARRAY_SIZE( temp ), L"%s.tmp", wide );
+    const size_t length = wcslen( wide );
+    if ( length + 5 >= ARRAY_SIZE( temp ) ) return HRESULT_FROM_WIN32( ERROR_FILENAME_EXCED_RANGE );
+    memcpy( temp, wide, length * sizeof( WCHAR ) );
+    memcpy( temp + length, L".tmp", sizeof( L".tmp" ) );
     file = CreateFileW( temp, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_FLAG_OPEN_REPARSE_POINT, NULL );
     if ( file == INVALID_HANDLE_VALUE ) return HRESULT_FROM_WIN32( GetLastError() );
     hr = WriteFile( file, data, size, &count, NULL ) && count == size && FlushFileBuffers( file ) ? S_OK : E_FAIL;

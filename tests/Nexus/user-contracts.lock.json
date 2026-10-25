@@ -91,7 +91,11 @@
       "LastError preserved"
     ],
     "addedChecks": [
-      "actual ticket request is valid XML"
+      "actual ticket request is valid XML",
+      "explicit client or actual platform client, never a guessed title",
+      "full-trust scope is preserved",
+      "legacy full-trust never hides backend denial",
+      "legacy full-trust requests actual platform account tickets"
     ]
   },
   "audio": {

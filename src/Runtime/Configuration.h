@@ -14,6 +14,10 @@ struct GameConfiguration
     std::wstring directory;
     std::vector<std::string> relatedProducts;
 };
+inline bool UsesLegacyFullTrust( const GameConfiguration &config ) noexcept
+{
+    return config.fullTrust && config.msaAppId.empty() && config.game.attribute( "configVersion" ) == "0";
+}
 HRESULT InitializeGameConfiguration( const INITIALIZE_OPTIONS *options ) noexcept;
 const GameConfiguration *GetGameConfiguration() noexcept;
 HRESULT GetPackageFamilyName( std::string_view name, std::string_view publisher, std::string &result ) noexcept;
