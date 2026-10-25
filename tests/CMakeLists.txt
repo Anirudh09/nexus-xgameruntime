@@ -113,6 +113,12 @@ foreach(probe sync transfer)
     set_target_properties(nexus_gamesave-${probe} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 endforeach()
 
+add_executable(nexus_gamesave-file-paths Nexus/gamesave-file-paths.cpp)
+target_link_libraries(nexus_gamesave-file-paths PRIVATE xgameruntime-impl)
+target_compile_features(nexus_gamesave-file-paths PRIVATE cxx_std_23)
+target_link_options(nexus_gamesave-file-paths PRIVATE -static -static-libgcc -static-libstdc++)
+set_target_properties(nexus_gamesave-file-paths PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 add_executable(nexus_gamesave-files Nexus/gamesave-files.cpp)
 target_link_libraries(nexus_gamesave-files PRIVATE xgameruntime-impl)
 target_compile_features(nexus_gamesave-files PRIVATE cxx_std_23)

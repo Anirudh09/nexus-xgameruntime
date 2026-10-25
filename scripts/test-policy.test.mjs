@@ -168,6 +168,24 @@ test('save result APIs never inspect opaque async storage or share operation ide
     assert.match(read('scripts/test-saves.mjs'),/Number\(match\[1\]\)>=6/);
 });
 
+test('atomic file saves construct a full wide sibling path without CRT formatting',()=>{
+    const source=read('src/System/GameSave/Files.h');
+    const write=source.slice(source.indexOf('static HRESULT files_write('),source.indexOf('/* Enumerate each complete parent'));
+    assert.doesNotMatch(write,/swprintf/);
+    assert.match(write,/length \+ 5 >= ARRAY_SIZE\( temp \)/);
+    assert.match(write,/memcpy\( temp, wide, length \* sizeof\( WCHAR \) \)/);
+    assert.match(write,/memcpy\( temp \+ length, L"\.tmp", sizeof\( L"\.tmp" \) \)/);
+    assert.match(write,/CREATE_NEW/);
+    assert.match(write,/FlushFileBuffers/);
+    assert.match(write,/MOVEFILE_REPLACE_EXISTING \| MOVEFILE_WRITE_THROUGH/);
+    const fixture=read('tests/Nexus/gamesave-file-paths.cpp');
+    assert.match(fixture,/#include "gamesave-transfer.cpp"/);
+    for(const label of ['write-unicode-away-from-cwd','replace-away-from-cwd','empty-write','readonly-replacement-fails','foreign-temporary-not-overwritten','parallel-independent-cwd','long-path-rejected','closed-synthetic-transport'])
+        assert.ok(fixture.includes('"'+label+'"'),label);
+    assert.match(read('scripts/test-component.mjs'),/\['nexus_gamesave-file-paths', 55\]/);
+    assert.match(read('tests/CMakeLists.txt'),/add_executable\(nexus_gamesave-file-paths Nexus\/gamesave-file-paths.cpp\)/);
+});
+
 test('versioned private COM declarations must not collapse independent C++ virtual slots',()=>{
     const interfaces={};
     for(const file of fs.readdirSync(path.join(root,'include')).filter(x=>x.endsWith('.idl')))
