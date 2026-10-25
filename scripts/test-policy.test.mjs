@@ -73,9 +73,19 @@ test('authentication compiles pinned WinRT declarations and never exports transp
     assert.match(read('cmake/Winrt.cmake'),/file\(SHA256/);
     assert.match(read('cmake/Winrt.cmake'),/FATAL_ERROR "Pinned WinRT source mismatch/);
     assert.doesNotMatch(read('src/xgameruntime.def')+read('src/xgameruntime-x86.def'),/Transport|Synthetic|TestHook/);
-    assert.match(read('scripts/test-authentication.mjs'),/Number\(match\[1\]\)>=23/);
+    assert.match(read('scripts/test-authentication.mjs'),/Number\(match\[1\]\)>=27/);
     assert.match(read('scripts/test-authentication.mjs'),/realAccounts:false,realCloud:false,fullRuntime:false/);
     assert.match(read('tests/Nexus/test_user.cpp'),/There is deliberately no network fallback/);
+});
+
+test('authentication covers missing optional signature policies without accepting malformed fields',()=>{
+    const tests=read('tests/Nexus/test_user.cpp');
+    for(const name of ['MissingOptionalSignaturePolicyDoesNotFailEndpointMetadata',
+        'SignedAndUnsignedEndpointOrderDoesNotChangeSuccess',
+        'PresentInvalidSignaturePolicyIsNotTreatedAsMissing',
+        'HandshakeAcceptsUnsignedTitleEndpointWithoutLosingIdentity'])
+        assert.match(tests,new RegExp('TEST\\( NexusAuthentication, '+name+' \\)'));
+    assert.match(tests,/return Reply\( currentEndpoints, output, length \)/);
 });
 
 test('delayed callbacks use actual monotonic Windows uptime in every SDK',()=>{

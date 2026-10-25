@@ -48,6 +48,7 @@ public:
         ++retryCalls;
     }
     bool currentFails = false, titleToken = true;
+    std::string currentEndpoints = Endpoints();
     bool blockBackend = false;
     bool blockAuthorization = false, refuseAuthorization = false;
     DWORD authorizationThread = 0;
@@ -128,7 +129,7 @@ public:
         if ( !wcscmp( url, L"https://title.mgt.xboxlive.com/titles/current/endpoints" ) )
         {
             if ( currentFails ) return E_FAIL;
-            return Reply( Endpoints(), output, length );
+            return Reply( currentEndpoints, output, length );
         }
         ++unexpected;
         return E_FAIL; // There is deliberately no network fallback.
@@ -350,6 +351,77 @@ TEST( NexusAuthentication, EmptyEndpointMetadataIsNotAnAllocationFailure )
     EXPECT_EQ( user->LoadEndpoints( reinterpret_cast<const BYTE *>( empty.data() ), empty.size() ), S_OK );
     EXPECT_EQ( user->endpointsLen, 0u );
     EXPECT_EQ( user->policiesLen, 0u );
+}
+TEST( NexusAuthentication, MissingOptionalSignaturePolicyDoesNotFailEndpointMetadata )
+{
+    Apartment apartment;
+    SyntheticTransport transport;
+    for ( const std::string value : {
+              R"({"EndPoints":[{"Protocol":"https","Host":"unsigned.example.invalid"}]})",
+              R"({"SignaturePolicies":[],"EndPoints":[{"Protocol":"https","Host":"unsigned.example.invalid"}]})",
+              R"({"SignaturePolicies":[{"Version":1,"MaxBodyBytes":1024}],"EndPoints":[{"Protocol":"https","Host":"unsigned.example.invalid"}]})" } )
+    {
+        auto user = CreateUser( transport );
+        EXPECT_EQ( user->LoadEndpoints( reinterpret_cast<const BYTE *>( value.data() ), value.size() ), S_OK );
+        ASSERT_EQ( user->endpointsLen, 1u );
+        EXPECT_EQ( user->endpoints[0].policy, nullptr );
+    }
+    EXPECT_EQ( transport.backendCalls + transport.httpCalls + transport.rawCalls, 0u );
+}
+TEST( NexusAuthentication, SignedAndUnsignedEndpointOrderDoesNotChangeSuccess )
+{
+    Apartment apartment;
+    SyntheticTransport transport;
+    const std::string signedEndpoint =
+        R"({"Protocol":"https","Host":"signed.example.invalid","SignaturePolicyIndex":0})";
+    const std::string unsignedEndpoint = R"({"Protocol":"https","Host":"unsigned.example.invalid"})";
+    for ( bool unsignedFirst : { false, true } )
+    {
+        auto user = CreateUser( transport );
+        const std::string value = R"({"SignaturePolicies":[{"Version":1,"MaxBodyBytes":1024}],"EndPoints":[)" +
+                                  ( unsignedFirst ? unsignedEndpoint : signedEndpoint ) + "," +
+                                  ( unsignedFirst ? signedEndpoint : unsignedEndpoint ) + "]}";
+        EXPECT_EQ( user->LoadEndpoints( reinterpret_cast<const BYTE *>( value.data() ), value.size() ), S_OK );
+        ASSERT_EQ( user->endpointsLen, 2u );
+        EXPECT_EQ( user->endpoints[unsignedFirst ? 0 : 1].policy, nullptr );
+        const auto *policy = user->endpoints[unsignedFirst ? 1 : 0].policy;
+        ASSERT_NE( policy, nullptr );
+        EXPECT_EQ( policy->version, 1u );
+        EXPECT_EQ( policy->maxBodyBytes, 1024u );
+    }
+    EXPECT_EQ( transport.backendCalls + transport.httpCalls + transport.rawCalls, 0u );
+}
+TEST( NexusAuthentication, PresentInvalidSignaturePolicyIsNotTreatedAsMissing )
+{
+    Apartment apartment;
+    SyntheticTransport transport;
+    for ( auto index : { "null", "false", "\"0\"", "{}", "[]" } )
+    {
+        auto user = CreateUser( transport );
+        std::string value = SyntheticTransport::Endpoints();
+        const auto offset = value.find( "SignaturePolicyIndex\":0" );
+        ASSERT_NE( offset, std::string::npos );
+        value.replace( offset, strlen( "SignaturePolicyIndex\":0" ), std::string( "SignaturePolicyIndex\":" ) + index );
+        EXPECT_TRUE( FAILED( user->LoadEndpoints( reinterpret_cast<const BYTE *>( value.data() ), value.size() ) ) );
+    }
+    EXPECT_EQ( transport.backendCalls + transport.httpCalls + transport.rawCalls, 0u );
+}
+TEST( NexusAuthentication, HandshakeAcceptsUnsignedTitleEndpointWithoutLosingIdentity )
+{
+    Apartment apartment;
+    SyntheticTransport transport;
+    transport.currentEndpoints = R"({"EndPoints":[{"Protocol":"https","Host":"unsigned.example.invalid"}]})";
+    auto user = CreateUser( transport );
+    ASSERT_EQ( user->InitializeNetwork( XUserAddOptions::AddDefaultUserSilently ), S_OK );
+    EXPECT_EQ( user->xuid, 1234567890123456ull );
+    EXPECT_STREQ( user->xbox_msa_id, "0123456789abcdef" );
+    EXPECT_STREQ( user->store_msa_id, "fedcba9876543210" );
+    EXPECT_STREQ( user->gamertag, "Synthetic" );
+    ASSERT_EQ( user->endpointsLen, 2u );
+    EXPECT_EQ( user->endpoints[1].policy, nullptr );
+    EXPECT_EQ( transport.backendCalls, 1u );
+    EXPECT_EQ( transport.httpCalls, 4u );
+    EXPECT_EQ( transport.unexpected, 0u );
 }
 TEST( NexusAuthentication, PartialZeroOrOverflowXboxIdsAreNotAuthenticated )
 {
