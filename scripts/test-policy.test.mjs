@@ -101,6 +101,8 @@ test('component CI cannot package, publish or imply complete runtime validation'
     const workflow=read('.github/workflows/test.yml');
     assert.match(workflow,/arch: \[win64, win32\]/);
     assert.match(workflow,/-DNEXUS_MIGRATION_PROBES=ON/);
+    assert.match(workflow,/-DCMAKE_CXX_FLAGS=-O2/);
+    assert.doesNotMatch(workflow,/-DNDEBUG|-fno-rtti|allow-multiple-definition|CMAKE_BUILD_TYPE=Release/);
     assert.match(workflow,/scripts\/test-component\.mjs/);
     assert.doesNotMatch(workflow,/gh release|build-proton|package-candidate|release-validation|secrets\./);
     assert.match(read('scripts/test-component.mjs'),/completeRuntime: false/);
