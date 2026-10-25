@@ -181,9 +181,9 @@ static void run_child(const char *mode)
         WCHAR path[MAX_PATH];XPackageChunkSelector s={0};XPackageInstallationMonitorHandle m;
         s.type=XPackageChunkSelectorType_Language;s.language="en-US";full_path(L"nx_common_probe.bin",path);CHECK("trace-remove-common",DeleteFileW(path));
         m=create(1,&s);progress(m,FALSE,0);
-        fprintf(stderr,"NEXUS_REPEAT_PROBE_BEGIN\n");fflush(stderr);
+        write_file(L"nx_repeat_begin.marker","begin");
         for(unsigned i=0;i<8;i++){CHECK("trace-repeat-update",IXPackageImpl4_XPackageUpdateInstallationMonitor(package,m));progress(m,FALSE,0);}
-        fprintf(stderr,"NEXUS_REPEAT_PROBE_END\n");fflush(stderr);
+        write_file(L"nx_repeat_end.marker","end");
         write_file(L"nx_common_probe.bin","share");CHECK("trace-restored",IXPackageImpl4_XPackageUpdateInstallationMonitor(package,m));progress(m,TRUE,strlen(config)+5+9+5);close_monitor(m);
     }
     else {

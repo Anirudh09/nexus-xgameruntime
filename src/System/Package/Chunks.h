@@ -363,7 +363,7 @@ static HRESULT chunks_inspect_group( struct chunk_snapshot *snapshot, UINT index
             }
             CloseHandle( readable );
         }
-        if ( FAILED( hr ) || *availability != XPackageChunkAvailability::Ready ) break;
+        if ( FAILED( hr ) || ( snapshot->track_sizes && *availability != XPackageChunkAvailability::Ready ) ) break;
     } while ( FindNextFileW( find, &data ) );
     FindClose( find );
     if ( !found ) *availability = XPackageChunkAvailability::Unavailable;
